@@ -1,20 +1,6 @@
-import { StyleSheet, Text, View } from "react-native";
+import { GameScreen } from '@/ui/game/gameScreen';
 
 export default function Index() {
-  return (
-    <View style={styles.container}>
-      <Text className="text-2xl font-bold">
-        Edit src/app/index.tsx to edit this screen.
-      </Text>
-    </View>
-  );
+  // Temporary: test mode lets one phone play both sides.
+  return <GameScreen localColor="w" testMode />;
 }
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-});
-
