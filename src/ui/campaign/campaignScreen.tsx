@@ -1,19 +1,13 @@
-import { Image, Pressable, ScrollView, Text, View } from "react-native";
+import { Pressable, ScrollView, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { BOSS_LEVEL, BOT_PROFILES } from "@/core/bots";
 import { adsRemoved, isUnlocked } from "@/core/storage";
-import { BOT_IMAGES } from "@/ui/campaign/botImages";
+import { BotPortrait } from "@/ui/campaign/botPortrait";
+import { LanguageToggle } from "@/ui/campaign/languageToggle";
 
 /** Bots per row. 5 per row gives 3 rows for 15 bots. */
 const COLUMNS = 5;
-
-/** Stand-in picture until a bot has a real image. \uFE0E keeps it as text, not an emoji. */
-function placeholderPiece(level: number): string {
-  const glyph =
-    level <= 3 ? "♟" : level <= 6 ? "♞" : level <= 9 ? "♝" : level <= 12 ? "♜" : level <= 14 ? "♛" : "♚";
-  return `${glyph}\uFE0E`;
-}
 
 type Props = {
   beaten: number[];
@@ -27,9 +21,12 @@ export function CampaignScreen({ beaten, onPlay, onBack }: Props) {
 
   return (
     <SafeAreaView className="flex-1 bg-canvas px-2">
-      <Pressable onPress={onBack} className="mt-4 self-start rounded-lg bg-bar px-3 py-2">
-        <Text className="font-bold text-ink">Back</Text>
-      </Pressable>
+      <View className="mt-4 flex-row items-center justify-between">
+        <Pressable onPress={onBack} className="rounded-lg bg-bar px-3 py-2">
+          <Text className="font-bold text-ink">Back</Text>
+        </Pressable>
+        <LanguageToggle />
+      </View>
 
       <Text className="mt-4 text-xl font-bold text-ink">Play with a bot</Text>
       <Text className="mt-1 text-ink">
@@ -44,7 +41,6 @@ export function CampaignScreen({ beaten, onPlay, onBack }: Props) {
             const unlocked = isUnlocked(p.level, beaten);
             const done = beaten.includes(p.level);
             const isBoss = p.level === BOSS_LEVEL;
-            const image = BOT_IMAGES[p.level];
 
             return (
               <View key={p.level} style={{ width: `${100 / COLUMNS}%` }} className="p-0.5">
@@ -56,13 +52,8 @@ export function CampaignScreen({ beaten, onPlay, onBack }: Props) {
                   } ${unlocked ? "" : "opacity-40"}`}
                 >
                   <View className="aspect-square w-full items-center justify-center overflow-hidden rounded-md bg-canvas">
-                    {image ? (
-                      <Image source={image} resizeMode="cover" className="h-full w-full" />
-                    ) : (
-                      <Text style={{ fontSize: 28 }} className="text-ink">
-                        {placeholderPiece(p.level)}
-                      </Text>
-                    )}
+                    {/* Locked bots hold still and are greyed out by the opacity above. */}
+                    <BotPortrait level={p.level} animate={unlocked} />
 
                     <View className="absolute left-0.5 top-0.5 rounded-full bg-bar px-1">
                       <Text className="text-[10px] font-bold text-ink">{p.level}</Text>

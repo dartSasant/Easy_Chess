@@ -37,7 +37,14 @@
         }
       ],
       "expo-sqlite",
-      ["expo-ble-kit", { "android": { "advertise": true } }],
+      [
+        "expo-ble-kit",
+        {
+          "android": {
+            "advertise": true
+          }
+        }
+      ],
       [
         "expo-build-properties",
         {
@@ -45,7 +52,8 @@
             "minSdkVersion": 26
           }
         }
-      ]
+      ],
+      "expo-audio"
     ],
     "experiments": {
       "typedRoutes": true,

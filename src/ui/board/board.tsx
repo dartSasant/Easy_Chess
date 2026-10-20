@@ -1,6 +1,7 @@
-import { Pressable, View, useWindowDimensions } from "react-native";
+import { Pressable, Text, View, useWindowDimensions } from "react-native";
 
-import { DEFAULT_PIECE_STYLE, type PieceStyleId } from "@/ui/theme/pieceStyles";
+import { type PieceStyleId } from "@/ui/theme/pieceStyles";
+import { useTheme } from "@/ui/theme/useTheme";
 import { PieceView, type BoardPiece } from "./pieceView";
 
 const FILES = ["a", "b", "c", "d", "e", "f", "g", "h"] as const;
@@ -16,7 +17,10 @@ type Props = {
   legalTargets: readonly string[];
   /** Optional: from/to squares of the last move. */
   lastMove?: { from: string; to: string } | null;
+  /** Optional: overrides the piece style of the current theme. */
   pieceStyle?: PieceStyleId;
+  /** Draws a-h along the bottom and 1-8 along the left. */
+  showCoordinates?: boolean;
   onSquarePress: (square: string) => void;
   disabled?: boolean;
 };
@@ -27,13 +31,17 @@ export function Board({
   selected,
   legalTargets,
   lastMove = null,
-  pieceStyle = DEFAULT_PIECE_STYLE,
+  pieceStyle,
+  showCoordinates = false,
   onSquarePress,
   disabled = false,
 }: Props) {
   const { width } = useWindowDimensions();
+  const theme = useTheme();
+  const style = pieceStyle ?? theme.pieceStyle;
   const squareSize = Math.floor(Math.min(width, 520) / 8);
   const boardSize = squareSize * 8;
+  const labelSize = Math.max(9, Math.floor(squareSize * 0.22));
 
   const files = orientation === "w" ? FILES : [...FILES].reverse();
   const ranks = orientation === "w" ? [...RANKS].reverse() : RANKS;
@@ -50,8 +58,7 @@ export function Board({
             const piece = pieceAt(square);
             const isSelected = selected === square;
             const isLast =
-              lastMove != null &&
-              (lastMove.from === square || lastMove.to === square);
+              lastMove != null && (lastMove.from === square || lastMove.to === square);
 
             return (
               <Pressable
@@ -81,13 +88,7 @@ export function Board({
                     }}
                   />
                 )}
-                {piece && (
-                  <PieceView
-                    piece={piece}
-                    size={squareSize}
-                    styleId={pieceStyle}
-                  />
-                )}
+                {piece && <PieceView piece={piece} size={squareSize} styleId={style} />}
                 {targets.has(square) && (
                   <View
                     pointerEvents="none"
@@ -100,6 +101,24 @@ export function Board({
                       opacity: 0.4,
                     }}
                   />
+                )}
+                {showCoordinates && col === 0 && (
+                  <Text
+                    pointerEvents="none"
+                    className="text-ink"
+                    style={{ position: "absolute", top: 1, left: 3, fontSize: labelSize, opacity: 0.65 }}
+                  >
+                    {rank}
+                  </Text>
+                )}
+                {showCoordinates && row === 7 && (
+                  <Text
+                    pointerEvents="none"
+                    className="text-ink"
+                    style={{ position: "absolute", bottom: 1, right: 3, fontSize: labelSize, opacity: 0.65 }}
+                  >
+                    {file}
+                  </Text>
                 )}
               </Pressable>
             );

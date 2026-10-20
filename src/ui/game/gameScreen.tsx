@@ -4,6 +4,14 @@ import { SafeAreaView } from "react-native-safe-area-context";
 
 import type { Bot } from "@/core/bots";
 import {
+  enterGame,
+  feedback,
+  gameEndFeedback,
+  haptics,
+  leaveGame,
+  moveFeedback,
+} from "@/core/feedback";
+import {
   GameSession,
   type Color,
   type MoveInput,
@@ -11,10 +19,18 @@ import {
   type PromotionPiece,
   type Square,
 } from "@/core/game";
+import { useSettings } from "@/core/storage/settings";
 import type { BleTransport } from "@/core/transport";
 import { Board } from "@/ui/board/board";
 import { PieceView } from "@/ui/board/pieceView";
-import { DEFAULT_PIECE_STYLE } from "@/ui/theme/pieceStyles";
+import { BotBubble } from "@/ui/game/botBubble";
+import { GamePopup } from "@/ui/game/gamePopups";
+import { MoveList } from "@/ui/game/moveList";
+import { PlayerCard } from "@/ui/game/playerCard";
+import { useBotChatter } from "@/ui/game/useBotChatter";
+import { useGameClock } from "@/ui/game/useGameClock";
+import { Confetti, Trophy } from "@/ui/game/winCelebration";
+import { useTheme } from "@/ui/theme/useTheme";
 
 const FILES = ["a", "b", "c", "d", "e", "f", "g", "h"];
 const RANKS = ["1", "2", "3", "4", "5", "6", "7", "8"];
@@ -63,38 +79,14 @@ function statusText(session: GameSession): string {
   return status.check ? `${side} to move, check` : `${side} to move`;
 }
 
-type PlayerBarProps = {
-  name: string;
-  captured: PieceType[];
-  capturedColor: Color;
-  children?: React.ReactNode;
-};
-
-function PlayerBar({
-  name,
-  captured,
-  capturedColor,
-  children,
-}: PlayerBarProps) {
-  return (
-    <View className="mx-3 my-2 flex-row items-center justify-between rounded-xl bg-bar px-3 py-2">
-      <View className="flex-1">
-        <Text className="text-base font-bold text-ink">{name}</Text>
-        <View className="h-5 flex-row">
-          {captured.map((type, i) => (
-            <View key={i} style={{ marginRight: -6 }}>
-              <PieceView
-                piece={{ color: capturedColor, type }}
-                size={20}
-                styleId={DEFAULT_PIECE_STYLE}
-              />
-            </View>
-          ))}
-        </View>
-      </View>
-      {children}
-    </View>
-  );
+/**
+ * Sound + haptic for a move that was just applied.
+ * The move text (SAN) tells us about captures ("x") and checks ("+").
+ * If the game just ended, the game-end sound plays instead.
+ */
+function playMoveSound(session: GameSession, san: string) {
+  if (session.status().kind !== "playing") return;
+  moveFeedback({ capture: san.includes("x"), check: san.includes("+") });
 }
 
 type Result = "win" | "loss" | "draw";
@@ -130,30 +122,33 @@ export function GameScreen({
   onNextBot,
 }: Props) {
   "use no memo";
+  const theme = useTheme();
+  const { language } = useSettings();
   const [session] = useState(() => new GameSession(localColor));
   const [tick, setTick] = useState(0);
   const [selected, setSelected] = useState<Square | null>(null);
   const [targets, setTargets] = useState<Square[]>([]);
-  const [pending, setPending] = useState<{ from: Square; to: Square } | null>(
-    null,
-  );
+  const [pending, setPending] = useState<{ from: Square; to: Square } | null>(null);
   const [ended, setEnded] = useState<string | null>(null);
   const [endedResult, setEndedResult] = useState<Result | null>(null);
-  const [drawState, setDrawState] = useState<"none" | "sent" | "received">(
-    "none",
-  );
+  const [drawState, setDrawState] = useState<"none" | "sent" | "received">("none");
   const [rematch, setRematch] = useState<"none" | "sent" | "received">("none");
   const [linkClosed, setLinkClosed] = useState(false);
+  const [resignAsk, setResignAsk] = useState(false);
+  const [notice, setNotice] = useState<{ title: string; message: string } | null>(null);
+  const [disconnectMsg, setDisconnectMsg] = useState<string | null>(null);
   const reported = useRef(false);
+  const endSoundPlayed = useRef(false);
 
-   const online = !!transport && !testMode;
+  const online = !!transport && !testMode;
   const vsBot = !!bot && !testMode;
   const opponentColor: Color = localColor === "w" ? "b" : "w";
+  const oppName = bot ? bot.name : opponentName;
   const oppLabel = bot ? `${bot.name} · Level ${bot.level}` : opponentName;
   const status = session.status();
   const isOver = status.kind !== "playing" || ended !== null;
   const thinking = vsBot && !isOver && !session.isMyTurn();
-  const last = session.lastMove();
+  const clock = useGameClock(session.turn(), !isOver);
 
   const outcome: Result | null =
     status.kind === "checkmate"
@@ -164,11 +159,36 @@ export function GameScreen({
         ? "draw"
         : endedResult;
 
+  // Bot speech bubbles and reactions (campaign games only).
+  const chat = useBotChatter({
+    level: bot?.level ?? 1,
+    enabled: vsBot,
+    moves: session.history(),
+    localColor,
+    outcome,
+    language,
+  });
+
   /** Ends the game by resignation, agreement or disconnect. The first ending wins. */
   const finish = (text: string, result: Result | null) => {
     setEnded((prev) => prev ?? text);
     setEndedResult((prev) => prev ?? result);
   };
+
+  // Sound: silence the menu ambience while this screen is open, and play a
+  // short "new game" sound when it opens.
+  useEffect(() => {
+    enterGame();
+    feedback.newGame();
+    return () => leaveGame();
+  }, []);
+
+  // Sound: play the win / lose / draw sound once when the game ends.
+  useEffect(() => {
+    if (!outcome || endSoundPlayed.current) return;
+    endSoundPlayed.current = true;
+    gameEndFeedback(outcome === "loss" ? "lose" : outcome);
+  }, [outcome]);
 
   // Tell the campaign once when a bot game is over.
   useEffect(() => {
@@ -177,7 +197,6 @@ export function GameScreen({
     onResult(outcome);
   }, [vsBot, onResult, outcome]);
 
-  // The bot moves whenever it is its turn.
   // The bot moves whenever it is its turn.
   useEffect(() => {
     if (!bot || testMode || ended !== null) return;
@@ -189,8 +208,10 @@ export function GameScreen({
       .then((move) => {
         if (cancelled || !move) return;
         const result = session.applyRemote(move);
-        if (result.ok) setTick((t) => t + 1);
-        else Alert.alert("Bot error", result.error);
+        if (result.ok) {
+          playMoveSound(session, result.move.san);
+          setTick((t) => t + 1);
+        } else Alert.alert("Bot error", result.error);
       })
       .catch(() => {
         // The bot failed. Nothing to apply, so the player simply keeps waiting.
@@ -214,9 +235,11 @@ export function GameScreen({
             promotion: msg.promotion,
           });
           if (result.ok) {
+            playMoveSound(session, result.move.san);
             setDrawState("none");
             setTick((t) => t + 1);
           } else {
+            feedback.error();
             Alert.alert("Opponent sent a bad move", result.error);
           }
           break;
@@ -225,6 +248,7 @@ export function GameScreen({
           finish(`${opponentName} resigned. You win`, "win");
           break;
         case "drawOffer":
+          feedback.drawOffer();
           setDrawState("received");
           break;
         case "drawAccept":
@@ -233,10 +257,11 @@ export function GameScreen({
           break;
         case "drawDecline":
           setDrawState("none");
-          Alert.alert("Draw declined", `${opponentName} declined your offer.`);
+          setNotice({ title: "Draw declined", message: `${opponentName} declined your offer.` });
           break;
         case "rematchOffer":
           // If we offered at the same moment, show their offer so one of us can accept it.
+          feedback.popup();
           setRematch("received");
           break;
         case "rematchAccept":
@@ -244,16 +269,15 @@ export function GameScreen({
           if (rematch !== "none") onRematch?.();
           break;
         case "rematchDecline":
+          feedback.popup();
           setRematch("none");
-          Alert.alert(
-            "Rematch declined",
-            `${opponentName} does not want a rematch.`,
-          );
+          Alert.alert("Rematch declined", `${opponentName} does not want a rematch.`);
           break;
         case "leave":
           setLinkClosed(true);
           setRematch("none");
           if (session.status().kind === "playing") {
+            setDisconnectMsg(`${opponentName} left the game.`);
             finish(`${opponentName} left the game`, null);
           }
           break;
@@ -264,7 +288,10 @@ export function GameScreen({
       if (e.kind === "closed") {
         setLinkClosed(true);
         setRematch("none");
-        if (session.status().kind === "playing") finish(e.reason, null);
+        if (session.status().kind === "playing") {
+          setDisconnectMsg(`Connection lost: ${e.reason}`);
+          finish(e.reason, null);
+        }
       }
     });
 
@@ -280,16 +307,16 @@ export function GameScreen({
   };
 
   const play = async (input: MoveInput) => {
-    const result = session.isMyTurn()
-      ? session.moveLocal(input)
-      : session.applyRemote(input);
+    const result = session.isMyTurn() ? session.moveLocal(input) : session.applyRemote(input);
 
     setPending(null);
     select(null);
     if (!result.ok) {
+      feedback.error();
       Alert.alert("Move not allowed", result.error);
       return;
     }
+    playMoveSound(session, result.move.san);
     setTick((t) => t + 1);
 
     if (online && transport) {
@@ -301,8 +328,7 @@ export function GameScreen({
         promotion: input.promotion,
         ply: result.move.ply,
       });
-      if (!sent)
-        Alert.alert("Move not sent", "The opponent may have disconnected.");
+      if (!sent) Alert.alert("Move not sent", "The opponent may have disconnected.");
     }
   };
 
@@ -320,33 +346,33 @@ export function GameScreen({
     }
 
     const piece = session.pieceAt(square);
-    select(piece && piece.color === session.turn() ? square : null);
+    const mine = !!piece && piece.color === session.turn();
+    if (mine) haptics.tap(); // light tick when you pick up a piece
+    select(mine ? square : null);
   };
 
   const comingSoon = (what: string) =>
     Alert.alert(what, "This needs the Bluetooth connection or a bot.");
 
   const resign = () => {
+    feedback.tap();
     if (!vsBot && !(online && transport)) return comingSoon("Resign");
-    Alert.alert("Resign?", "You will lose this game.", [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Resign",
-        style: "destructive",
-        onPress: () => {
-          if (online && transport) void transport.send({ t: "resign" });
-          finish("You resigned", "loss");
-        },
-      },
-    ]);
+    setResignAsk(true);
+  };
+
+  const confirmResign = () => {
+    setResignAsk(false);
+    if (online && transport) void transport.send({ t: "resign" });
+    finish("You resigned", "loss");
   };
 
   const offerDraw = () => {
+    feedback.tap();
     if (vsBot && bot) {
       if (bot.acceptsDraw(session.fen(), opponentColor)) {
         finish("Draw agreed", "draw");
       } else {
-        Alert.alert("Draw declined", `${bot.name} wants to play on.`);
+        setNotice({ title: "Draw declined", message: `${bot.name} wants to play on.` });
       }
       return;
     }
@@ -357,6 +383,7 @@ export function GameScreen({
 
   const answerDraw = (accept: boolean) => {
     if (!transport) return;
+    feedback.tap();
     void transport.send({ t: accept ? "drawAccept" : "drawDecline" });
     setDrawState("none");
     if (accept) finish("Draw agreed", "draw");
@@ -364,35 +391,47 @@ export function GameScreen({
 
   const offerRematch = () => {
     if (!transport) return;
+    feedback.tap();
     void transport.send({ t: "rematchOffer" });
     setRematch("sent");
   };
 
   const answerRematch = (accept: boolean) => {
     if (!transport) return;
+    feedback.tap();
     void transport.send({ t: accept ? "rematchAccept" : "rematchDecline" });
     if (accept) onRematch?.();
     else setRematch("none");
   };
 
   const leave = async () => {
+    feedback.nav();
     if (online && transport && !linkClosed) {
       await transport.send({ t: "leave" }); // tell the other phone before Bluetooth stops
     }
     onLeave?.();
   };
 
-  const headline =
-    ended ?? (thinking ? `${oppLabel} is thinking...` : statusText(session));
+  const headline = ended ?? (thinking ? `${oppLabel} is thinking...` : statusText(session));
 
   return (
     <SafeAreaView className="flex-1 bg-canvas">
       <View className="flex-1 justify-center">
-        <PlayerBar
-          name={oppLabel}
+        <PlayerCard
+          name={oppName}
+          subtitle={bot ? `Level ${bot.level}` : undefined}
           captured={capturedBy(session, opponentColor)}
           capturedColor={localColor}
+          seconds={clock[opponentColor]}
+          active={!isOver && session.turn() === opponentColor}
         />
+
+        {/* Fixed-height slot, so the layout does not jump when the bubble appears. */}
+        {vsBot && bot ? (
+          <View style={{ height: 48, justifyContent: "center" }}>
+            {chat ? <BotBubble level={bot.level} chat={chat} /> : null}
+          </View>
+        ) : null}
 
         <View className="items-center">
           <Board
@@ -400,41 +439,25 @@ export function GameScreen({
             orientation={localColor}
             selected={selected}
             legalTargets={targets}
-            lastMove={last ? { from: last.from, to: last.to } : null}
+            showCoordinates
             onSquarePress={onSquarePress}
             disabled={isOver}
           />
         </View>
 
-        <Text className="mt-3 text-center text-base font-bold text-ink">
-          {headline}
-        </Text>
+        <View className="mt-2">
+          <MoveList moves={session.history()} />
+        </View>
 
-        {drawState === "received" && !isOver && (
-          <View className="mt-2 flex-row items-center justify-center">
-            <Text className="mr-3 text-ink">{opponentName} offers a draw</Text>
-            <Pressable
-              onPress={() => answerDraw(true)}
-              className="mr-2 rounded-lg bg-accent px-3 py-2"
-            >
-              <Text className="font-bold text-ink">Accept</Text>
-            </Pressable>
-            <Pressable
-              onPress={() => answerDraw(false)}
-              className="rounded-lg border border-danger px-3 py-2"
-            >
-              <Text className="font-bold text-danger">Decline</Text>
-            </Pressable>
-          </View>
-        )}
+        <Text className="mt-2 text-center text-base font-bold text-ink">{headline}</Text>
 
         {isOver && (
           <View className="mt-2 items-center">
+            {vsBot && outcome === "win" ? <Trophy /> : null}
+
             {online && rematch === "received" && (
               <View className="flex-row items-center justify-center">
-                <Text className="mr-3 text-ink">
-                  {opponentName} wants a rematch
-                </Text>
+                <Text className="mr-3 text-ink">{opponentName} wants a rematch</Text>
                 <Pressable
                   onPress={() => answerRematch(true)}
                   className="mr-2 rounded-lg bg-accent px-3 py-2"
@@ -450,22 +473,26 @@ export function GameScreen({
               </View>
             )}
 
-            {online && linkClosed && (
-              <Text className="text-ink">Rematch is not available.</Text>
-            )}
+            {online && linkClosed && <Text className="text-ink">Rematch is not available.</Text>}
 
             <View className="mt-2 flex-row">
               {vsBot && outcome === "win" && onNextBot && (
                 <Pressable
-                  onPress={onNextBot}
+                  onPress={() => {
+                    feedback.nav();
+                    onNextBot();
+                  }}
                   className="mr-2 rounded-lg bg-accent px-4 py-3"
                 >
-                  <Text className="font-bold text-ink">Next bot</Text>
+                  <Text className="font-bold text-ink">Next opponent</Text>
                 </Pressable>
               )}
               {vsBot && onRematch && (
                 <Pressable
-                  onPress={onRematch}
+                  onPress={() => {
+                    feedback.nav();
+                    onRematch();
+                  }}
                   className="mr-2 rounded-lg bg-accent px-4 py-3"
                 >
                   <Text className="font-bold text-ink">Play again</Text>
@@ -483,10 +510,7 @@ export function GameScreen({
                 </Pressable>
               )}
               {onLeave && (
-                <Pressable
-                  onPress={() => void leave()}
-                  className="rounded-lg bg-bar px-4 py-3"
-                >
+                <Pressable onPress={() => void leave()} className="rounded-lg bg-bar px-4 py-3">
                   <Text className="font-bold text-ink">
                     {vsBot ? "Back to bots" : "Back to home"}
                   </Text>
@@ -496,32 +520,33 @@ export function GameScreen({
           </View>
         )}
 
-        <PlayerBar
+        <PlayerCard
           name="You"
           captured={capturedBy(session, localColor)}
           capturedColor={opponentColor}
+          seconds={clock[localColor]}
+          active={!isOver && session.turn() === localColor}
         >
-          <View className="flex-row">
-            <Pressable
-              onPress={resign}
-              disabled={isOver}
-              className="mr-2 rounded-lg border border-danger px-3 py-2"
-            >
-              <Text className="font-bold text-danger">Resign</Text>
-            </Pressable>
-            <Pressable
-              onPress={offerDraw}
-              disabled={isOver || drawState === "sent"}
-              className="rounded-lg bg-accent px-3 py-2"
-            >
-              <Text className="font-bold text-ink">
-                {drawState === "sent" ? "Offered" : "Offer draw"}
-              </Text>
-            </Pressable>
-          </View>
-        </PlayerBar>
+          <Pressable
+            onPress={resign}
+            disabled={isOver}
+            className="mr-2 rounded-lg border border-danger px-3 py-2"
+          >
+            <Text className="font-bold text-danger">Resign</Text>
+          </Pressable>
+          <Pressable
+            onPress={offerDraw}
+            disabled={isOver || drawState === "sent"}
+            className="rounded-lg bg-accent px-3 py-2"
+          >
+            <Text className="font-bold text-ink">
+              {drawState === "sent" ? "Offered" : "Offer draw"}
+            </Text>
+          </Pressable>
+        </PlayerCard>
       </View>
 
+      {/* Promotion choice */}
       <Modal
         transparent
         animationType="fade"
@@ -537,21 +562,68 @@ export function GameScreen({
               <Pressable
                 key={type}
                 accessibilityLabel={`Promote to ${type}`}
-                onPress={() =>
-                  pending && void play({ ...pending, promotion: type })
-                }
+                onPress={() => pending && void play({ ...pending, promotion: type })}
                 className="mx-1 rounded-xl bg-canvas"
               >
                 <PieceView
                   piece={{ color: session.turn(), type }}
                   size={56}
-                  styleId={DEFAULT_PIECE_STYLE}
+                  styleId={theme.pieceStyle}
                 />
               </Pressable>
             ))}
           </View>
         </Pressable>
       </Modal>
+
+      {/* Resign confirmation */}
+      <GamePopup
+        visible={resignAsk}
+        title="Are you sure?"
+        message="You will lose this game."
+        onClose={() => setResignAsk(false)}
+        actions={[
+          { label: "Cancel", tone: "neutral", onPress: () => setResignAsk(false) },
+          { label: "Resign", tone: "danger", onPress: confirmResign },
+        ]}
+      />
+
+      {/* Draw offered to you */}
+      <GamePopup
+        visible={drawState === "received" && !isOver}
+        title="Draw offered"
+        message={`${opponentName} offers a draw.`}
+        sound={false}
+        actions={[
+          { label: "Decline", tone: "danger", onPress: () => answerDraw(false) },
+          { label: "Accept", tone: "primary", onPress: () => answerDraw(true) },
+        ]}
+      />
+
+      {/* Draw declined and other short notices */}
+      <GamePopup
+        visible={notice !== null}
+        title={notice?.title ?? ""}
+        message={notice?.message}
+        onClose={() => setNotice(null)}
+        actions={[{ label: "OK", tone: "primary", onPress: () => setNotice(null) }]}
+      />
+
+      {/* Opponent left or the link dropped */}
+      <GamePopup
+        visible={disconnectMsg !== null}
+        title="Opponent disconnected"
+        message={disconnectMsg ?? ""}
+        actions={[
+          { label: "Stay", tone: "neutral", onPress: () => setDisconnectMsg(null) },
+          ...(onLeave
+            ? [{ label: "Leave", tone: "primary" as const, onPress: () => void leave() }]
+            : []),
+        ]}
+      />
+
+      {/* Confetti falls over everything after a win against a bot */}
+      {vsBot && outcome === "win" ? <Confetti /> : null}
     </SafeAreaView>
   );
 }

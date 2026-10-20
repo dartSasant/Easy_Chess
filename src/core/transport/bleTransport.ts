@@ -12,12 +12,12 @@ import {
   PROTOCOL_VERSION,
   decode,
   encode,
-  makePeerId,
   pickColor,
   randomRoll,
   type GameMsg,
   type Msg,
 } from "@/core/protocol";
+import { getStablePeerId } from "@/core/storage/peerId";
 
 const SERVICE = "6e8f0001-5a1c-4c3e-9b57-0e5c3a1d7a01";
 const RX = "6e8f0002-5a1c-4c3e-9b57-0e5c3a1d7a01"; // the other phone writes here
@@ -25,21 +25,35 @@ const TX = "6e8f0003-5a1c-4c3e-9b57-0e5c3a1d7a01"; // we notify here
 
 const PING_EVERY_MS = 4000;
 const DEAD_AFTER_MS = 12000;
+/** How long an incoming challenge waits for Accept before it expires. */
+const CHALLENGE_TTL_MS = 20000;
+/** How long the challenger waits for an answer. Longer than the TTL on purpose. */
+const ANSWER_TIMEOUT_MS = 25000;
 
 export type TransportEvent =
   | { kind: "log"; text: string }
   | { kind: "found"; devices: ScanResult[] }
+  | { kind: "challenge"; peerId: string; name: string }
+  | { kind: "challengeExpired" }
+  | { kind: "noAnswer" }
   | { kind: "ready"; localColor: Color; opponentName: string }
   | { kind: "closed"; reason: string };
 
 type Phase = "idle" | "handshake" | "ready";
+type Hello = Extract<Msg, { t: "hello" }>;
 
 export class BleTransport {
-  readonly peerId = makePeerId();
+  readonly peerId = getStablePeerId();
 
   private phase: Phase = "idle";
   private myRoll = randomRoll();
   private opponent: { peerId: string; name: string; roll: number } | null = null;
+
+  /** True once we challenged someone or accepted a challenge. Before that we stay quiet. */
+  private accepted = false;
+  private challenger: Hello | null = null;
+  private challengeTimer: ReturnType<typeof setTimeout> | null = null;
+  private answerTimer: ReturnType<typeof setTimeout> | null = null;
 
   private server: GattServer | null = null;
   private advertisement: Advertisement | null = null;
@@ -112,7 +126,8 @@ export class BleTransport {
       srv.addSubscriptionListener((event) => {
         if (event.subscribed) {
           this.subscribers.add(event.centralId);
-          void this.sendHello();
+          // Until we accept a challenge we say nothing, so the challenger cannot start a game alone.
+          if (this.accepted) void this.sendHello();
         } else {
           this.subscribers.delete(event.centralId);
         }
@@ -141,8 +156,9 @@ export class BleTransport {
     }
   }
 
-  async connect(id: string): Promise<void> {
-    if (this.phase !== "handshake") return;
+  /** Challenges the phone with this id. Returns false if the link could not be made. */
+  async connect(id: string): Promise<boolean> {
+    if (this.phase !== "handshake") return false;
     try {
       const peripheral = BleManager.getPeripheral(id);
       this.log(`connecting to ${id}`);
@@ -152,10 +168,32 @@ export class BleTransport {
       await peripheral.subscribe(SERVICE, TX, (value) => this.handleIncoming(value));
       this.outbound = peripheral;
       this.log("subscribed to their TX");
+
+      this.accepted = true; // we started this challenge
+      this.acceptPending(); // if they challenged us at the same moment, that counts as yes
       await this.sendHello();
+      this.startAnswerTimer();
+      return true;
     } catch (error) {
       this.log(`connect failed: ${String(error)}`);
+      if (!this.outbound) this.accepted = false;
+      return false;
     }
+  }
+
+  /** Accept the challenge that was announced with a "challenge" event. */
+  accept(): void {
+    if (this.phase !== "handshake") return;
+    this.clearChallengeTimer();
+    this.accepted = true;
+    this.acceptPending();
+  }
+
+  /** Decline the pending challenge. The challenger simply gets no answer. */
+  decline(): void {
+    this.clearChallengeTimer();
+    this.challenger = null;
+    this.accepted = false;
   }
 
   async stop(): Promise<void> {
@@ -172,6 +210,10 @@ export class BleTransport {
     this.phase = "idle";
     if (this.heartbeat) clearInterval(this.heartbeat);
     this.heartbeat = null;
+    this.clearChallengeTimer();
+    this.clearAnswerTimer();
+    this.accepted = false;
+    this.challenger = null;
 
     const steps: (() => unknown)[] = [
       () => this.scanSession?.stop(),
@@ -195,6 +237,38 @@ export class BleTransport {
     this.opponent = null;
     this.myRoll = randomRoll();
     this.pending = [];
+  }
+
+  // ---- timers ----
+
+  private clearChallengeTimer() {
+    if (this.challengeTimer) clearTimeout(this.challengeTimer);
+    this.challengeTimer = null;
+  }
+
+  private clearAnswerTimer() {
+    if (this.answerTimer) clearTimeout(this.answerTimer);
+    this.answerTimer = null;
+  }
+
+  /** The challenger gives up after a while and frees the link so it can try again. */
+  private startAnswerTimer() {
+    this.clearAnswerTimer();
+    this.answerTimer = setTimeout(() => {
+      this.answerTimer = null;
+      if (this.phase !== "handshake") return;
+      this.log("no answer, giving up");
+      const link = this.outbound;
+      this.outbound = null;
+      this.accepted = false;
+      this.opponent = null;
+      try {
+        void link?.disconnect();
+      } catch {
+        // already gone
+      }
+      this.emit({ kind: "noAnswer" });
+    }, ANSWER_TIMEOUT_MS);
   }
 
   // ---- sending ----
@@ -259,11 +333,34 @@ export class BleTransport {
     }
   }
 
-  private onHello(msg: Extract<Msg, { t: "hello" }>) {
+  /** Runs a challenge that was waiting for our answer. */
+  private acceptPending() {
+    const c = this.challenger;
+    this.challenger = null;
+    if (c) this.onHello(c);
+  }
+
+  private onHello(msg: Hello) {
     if (this.phase !== "handshake") return; // repeats over a second link land here
     if (msg.peerId === this.peerId) return;
     if (msg.v !== PROTOCOL_VERSION) {
       this.close("The other phone runs a different version of the app");
+      return;
+    }
+
+    // Someone is challenging us. Tell the screen and wait for Accept or Decline.
+    if (!this.accepted) {
+      if (this.challenger?.peerId === msg.peerId) return; // already announced
+      this.challenger = msg;
+      this.clearChallengeTimer();
+      this.challengeTimer = setTimeout(() => {
+        this.challengeTimer = null;
+        if (this.challenger) {
+          this.challenger = null;
+          this.emit({ kind: "challengeExpired" });
+        }
+      }, CHALLENGE_TTL_MS);
+      this.emit({ kind: "challenge", peerId: msg.peerId, name: msg.name });
       return;
     }
 
@@ -279,6 +376,7 @@ export class BleTransport {
     }
 
     this.phase = "ready";
+    this.clearAnswerTimer();
     this.lastSeen = Date.now();
     this.heartbeat = setInterval(() => {
       if (Date.now() - this.lastSeen > DEAD_AFTER_MS) {
