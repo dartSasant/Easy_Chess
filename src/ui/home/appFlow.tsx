@@ -1,11 +1,12 @@
 import { useState } from "react";
 
-import { loadPlayerName, savePlayerName } from "@/storage"
+import { loadPlayerName, savePlayerName } from "@/core/storage";
+import { CampaignFlow } from "@/ui/campaign/campaignFlow";
 import { HomeScreen } from "@/ui/home/homeScreen";
 import { NameScreen } from "@/ui/home/nameScreen";
 import { LobbyScreen } from "@/ui/lobby/lobbyScreen";
 
-type Screen = "home" | "name" | "lobby";
+type Screen = "home" | "name" | "lobby" | "campaign";
 
 export function AppFlow() {
   "use no memo";
@@ -30,10 +31,15 @@ export function AppFlow() {
     return <LobbyScreen playerName={name} onExit={() => setScreen("home")} />;
   }
 
+  if (screen === "campaign") {
+    return <CampaignFlow onExit={() => setScreen("home")} />;
+  }
+
   return (
     <HomeScreen
       playerName={name}
       onFindPlayer={() => setScreen("lobby")}
+      onPlayBot={() => setScreen("campaign")}
       onChangeName={() => setScreen("name")}
     />
   );

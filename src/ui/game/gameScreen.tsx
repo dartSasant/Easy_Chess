@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Alert, Modal, Pressable, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
+import type { Bot } from "@/core/bots";
 import {
   GameSession,
   type Color,
@@ -10,10 +11,10 @@ import {
   type PromotionPiece,
   type Square,
 } from "@/core/game";
+import type { BleTransport } from "@/core/transport";
 import { Board } from "@/ui/board/board";
 import { PieceView } from "@/ui/board/pieceView";
 import { DEFAULT_PIECE_STYLE } from "@/ui/theme/pieceStyles";
-import type { BleTransport } from "@/core/transport";
 
 const FILES = ["a", "b", "c", "d", "e", "f", "g", "h"];
 const RANKS = ["1", "2", "3", "4", "5", "6", "7", "8"];
@@ -96,6 +97,8 @@ function PlayerBar({
   );
 }
 
+type Result = "win" | "loss" | "draw";
+
 type Props = {
   localColor?: Color;
   /** Test mode: one phone plays both sides. Turn off for real games. */
@@ -103,10 +106,16 @@ type Props = {
   /** Bluetooth link to the opponent. Without it, the screen has no network. */
   transport?: BleTransport;
   opponentName?: string;
-  /** Both players agreed to a rematch. The parent starts a new game with swapped colors. */
+  /** Bluetooth: both players agreed to a rematch. Bot: "Play again". The parent starts a new game. */
   onRematch?: () => void;
-  /** Go back to the home screen. */
+  /** Go back to the previous screen. */
   onLeave?: () => void;
+  /** Play against this bot instead of a person. */
+  bot?: Bot;
+  /** Called once when a game against a bot ends. */
+  onResult?: (result: Result) => void;
+  /** Offered after a win against a bot. */
+  onNextBot?: () => void;
 };
 
 export function GameScreen({
@@ -116,23 +125,83 @@ export function GameScreen({
   opponentName = "Opponent",
   onRematch,
   onLeave,
+  bot,
+  onResult,
+  onNextBot,
 }: Props) {
   "use no memo";
   const [session] = useState(() => new GameSession(localColor));
-  const [, setTick] = useState(0);
+  const [tick, setTick] = useState(0);
   const [selected, setSelected] = useState<Square | null>(null);
   const [targets, setTargets] = useState<Square[]>([]);
-  const [pending, setPending] = useState<{ from: Square; to: Square } | null>(null);
+  const [pending, setPending] = useState<{ from: Square; to: Square } | null>(
+    null,
+  );
   const [ended, setEnded] = useState<string | null>(null);
-  const [drawState, setDrawState] = useState<"none" | "sent" | "received">("none");
+  const [endedResult, setEndedResult] = useState<Result | null>(null);
+  const [drawState, setDrawState] = useState<"none" | "sent" | "received">(
+    "none",
+  );
   const [rematch, setRematch] = useState<"none" | "sent" | "received">("none");
   const [linkClosed, setLinkClosed] = useState(false);
+  const reported = useRef(false);
 
-  const online = !!transport && !testMode;
+   const online = !!transport && !testMode;
+  const vsBot = !!bot && !testMode;
   const opponentColor: Color = localColor === "w" ? "b" : "w";
-  const isOver = session.status().kind !== "playing" || ended !== null;
+  const oppLabel = bot ? `${bot.name} · Level ${bot.level}` : opponentName;
+  const status = session.status();
+  const isOver = status.kind !== "playing" || ended !== null;
+  const thinking = vsBot && !isOver && !session.isMyTurn();
   const last = session.lastMove();
 
+  const outcome: Result | null =
+    status.kind === "checkmate"
+      ? status.winner === localColor
+        ? "win"
+        : "loss"
+      : status.kind === "draw"
+        ? "draw"
+        : endedResult;
+
+  /** Ends the game by resignation, agreement or disconnect. The first ending wins. */
+  const finish = (text: string, result: Result | null) => {
+    setEnded((prev) => prev ?? text);
+    setEndedResult((prev) => prev ?? result);
+  };
+
+  // Tell the campaign once when a bot game is over.
+  useEffect(() => {
+    if (!vsBot || !onResult || !outcome || reported.current) return;
+    reported.current = true;
+    onResult(outcome);
+  }, [vsBot, onResult, outcome]);
+
+  // The bot moves whenever it is its turn.
+  // The bot moves whenever it is its turn.
+  useEffect(() => {
+    if (!bot || testMode || ended !== null) return;
+    if (session.status().kind !== "playing" || session.isMyTurn()) return;
+
+    let cancelled = false;
+    bot
+      .chooseMove(session.fen())
+      .then((move) => {
+        if (cancelled || !move) return;
+        const result = session.applyRemote(move);
+        if (result.ok) setTick((t) => t + 1);
+        else Alert.alert("Bot error", result.error);
+      })
+      .catch(() => {
+        // The bot failed. Nothing to apply, so the player simply keeps waiting.
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [bot, testMode, ended, tick, session]);
+
+  // Bluetooth messages and link events.
   useEffect(() => {
     if (!transport || testMode) return;
 
@@ -153,14 +222,14 @@ export function GameScreen({
           break;
         }
         case "resign":
-          setEnded(`${opponentName} resigned. You win`);
+          finish(`${opponentName} resigned. You win`, "win");
           break;
         case "drawOffer":
           setDrawState("received");
           break;
         case "drawAccept":
           setDrawState("none");
-          setEnded("Draw agreed");
+          finish("Draw agreed", "draw");
           break;
         case "drawDecline":
           setDrawState("none");
@@ -176,13 +245,16 @@ export function GameScreen({
           break;
         case "rematchDecline":
           setRematch("none");
-          Alert.alert("Rematch declined", `${opponentName} does not want a rematch.`);
+          Alert.alert(
+            "Rematch declined",
+            `${opponentName} does not want a rematch.`,
+          );
           break;
         case "leave":
           setLinkClosed(true);
           setRematch("none");
           if (session.status().kind === "playing") {
-            setEnded((prev) => prev ?? `${opponentName} left the game`);
+            finish(`${opponentName} left the game`, null);
           }
           break;
       }
@@ -192,9 +264,7 @@ export function GameScreen({
       if (e.kind === "closed") {
         setLinkClosed(true);
         setRematch("none");
-        if (session.status().kind === "playing") {
-          setEnded((prev) => prev ?? e.reason);
-        }
+        if (session.status().kind === "playing") finish(e.reason, null);
       }
     });
 
@@ -210,7 +280,9 @@ export function GameScreen({
   };
 
   const play = async (input: MoveInput) => {
-    const result = session.isMyTurn() ? session.moveLocal(input) : session.applyRemote(input);
+    const result = session.isMyTurn()
+      ? session.moveLocal(input)
+      : session.applyRemote(input);
 
     setPending(null);
     select(null);
@@ -229,7 +301,8 @@ export function GameScreen({
         promotion: input.promotion,
         ply: result.move.ply,
       });
-      if (!sent) Alert.alert("Move not sent", "The opponent may have disconnected.");
+      if (!sent)
+        Alert.alert("Move not sent", "The opponent may have disconnected.");
     }
   };
 
@@ -251,24 +324,32 @@ export function GameScreen({
   };
 
   const comingSoon = (what: string) =>
-    Alert.alert(what, "This needs the Bluetooth connection.");
+    Alert.alert(what, "This needs the Bluetooth connection or a bot.");
 
   const resign = () => {
-    if (!online || !transport) return comingSoon("Resign");
+    if (!vsBot && !(online && transport)) return comingSoon("Resign");
     Alert.alert("Resign?", "You will lose this game.", [
       { text: "Cancel", style: "cancel" },
       {
         text: "Resign",
         style: "destructive",
         onPress: () => {
-          void transport.send({ t: "resign" });
-          setEnded("You resigned");
+          if (online && transport) void transport.send({ t: "resign" });
+          finish("You resigned", "loss");
         },
       },
     ]);
   };
 
   const offerDraw = () => {
+    if (vsBot && bot) {
+      if (bot.acceptsDraw(session.fen(), opponentColor)) {
+        finish("Draw agreed", "draw");
+      } else {
+        Alert.alert("Draw declined", `${bot.name} wants to play on.`);
+      }
+      return;
+    }
     if (!online || !transport) return comingSoon("Offer draw");
     void transport.send({ t: "drawOffer" });
     setDrawState("sent");
@@ -278,7 +359,7 @@ export function GameScreen({
     if (!transport) return;
     void transport.send({ t: accept ? "drawAccept" : "drawDecline" });
     setDrawState("none");
-    if (accept) setEnded("Draw agreed");
+    if (accept) finish("Draw agreed", "draw");
   };
 
   const offerRematch = () => {
@@ -301,13 +382,14 @@ export function GameScreen({
     onLeave?.();
   };
 
-  const headline = ended ?? statusText(session);
+  const headline =
+    ended ?? (thinking ? `${oppLabel} is thinking...` : statusText(session));
 
   return (
     <SafeAreaView className="flex-1 bg-canvas">
       <View className="flex-1 justify-center">
         <PlayerBar
-          name={opponentName}
+          name={oppLabel}
           captured={capturedBy(session, opponentColor)}
           capturedColor={localColor}
         />
@@ -324,7 +406,9 @@ export function GameScreen({
           />
         </View>
 
-        <Text className="mt-3 text-center text-base font-bold text-ink">{headline}</Text>
+        <Text className="mt-3 text-center text-base font-bold text-ink">
+          {headline}
+        </Text>
 
         {drawState === "received" && !isOver && (
           <View className="mt-2 flex-row items-center justify-center">
@@ -348,7 +432,9 @@ export function GameScreen({
           <View className="mt-2 items-center">
             {online && rematch === "received" && (
               <View className="flex-row items-center justify-center">
-                <Text className="mr-3 text-ink">{opponentName} wants a rematch</Text>
+                <Text className="mr-3 text-ink">
+                  {opponentName} wants a rematch
+                </Text>
                 <Pressable
                   onPress={() => answerRematch(true)}
                   className="mr-2 rounded-lg bg-accent px-3 py-2"
@@ -369,6 +455,22 @@ export function GameScreen({
             )}
 
             <View className="mt-2 flex-row">
+              {vsBot && outcome === "win" && onNextBot && (
+                <Pressable
+                  onPress={onNextBot}
+                  className="mr-2 rounded-lg bg-accent px-4 py-3"
+                >
+                  <Text className="font-bold text-ink">Next bot</Text>
+                </Pressable>
+              )}
+              {vsBot && onRematch && (
+                <Pressable
+                  onPress={onRematch}
+                  className="mr-2 rounded-lg bg-accent px-4 py-3"
+                >
+                  <Text className="font-bold text-ink">Play again</Text>
+                </Pressable>
+              )}
               {online && !linkClosed && rematch !== "received" && (
                 <Pressable
                   onPress={offerRematch}
@@ -381,8 +483,13 @@ export function GameScreen({
                 </Pressable>
               )}
               {onLeave && (
-                <Pressable onPress={() => void leave()} className="rounded-lg bg-bar px-4 py-3">
-                  <Text className="font-bold text-ink">Back to home</Text>
+                <Pressable
+                  onPress={() => void leave()}
+                  className="rounded-lg bg-bar px-4 py-3"
+                >
+                  <Text className="font-bold text-ink">
+                    {vsBot ? "Back to bots" : "Back to home"}
+                  </Text>
                 </Pressable>
               )}
             </View>
@@ -430,7 +537,9 @@ export function GameScreen({
               <Pressable
                 key={type}
                 accessibilityLabel={`Promote to ${type}`}
-                onPress={() => pending && void play({ ...pending, promotion: type })}
+                onPress={() =>
+                  pending && void play({ ...pending, promotion: type })
+                }
                 className="mx-1 rounded-xl bg-canvas"
               >
                 <PieceView
