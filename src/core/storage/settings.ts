@@ -1,8 +1,21 @@
 import Storage from "expo-sqlite/kv-store";
 import { useSyncExternalStore } from "react";
 
-export type ThemeId = "zen" | "cozy" | "playful" | "premium" | "gadget" | "ninja";
-export const THEME_IDS: ThemeId[] = ["zen", "cozy", "playful", "premium", "gadget", "ninja"];
+export type ThemeId =
+  | "zen"
+  | "cozy"
+  | "playful"
+  | "premium"
+  | "gadget"
+  | "ninja";
+export const THEME_IDS: ThemeId[] = [
+  "zen",
+  "cozy",
+  "playful",
+  "premium",
+  "gadget",
+  "ninja",
+];
 
 export type Language = "en" | "ne";
 
@@ -35,13 +48,23 @@ function load(): Settings {
     if (!raw) return { ...DEFAULTS };
     const p = JSON.parse(raw) as Partial<Settings>;
     return {
-      soundEnabled: typeof p.soundEnabled === "boolean" ? p.soundEnabled : DEFAULTS.soundEnabled,
+      soundEnabled:
+        typeof p.soundEnabled === "boolean"
+          ? p.soundEnabled
+          : DEFAULTS.soundEnabled,
       hapticsEnabled:
-        typeof p.hapticsEnabled === "boolean" ? p.hapticsEnabled : DEFAULTS.hapticsEnabled,
+        typeof p.hapticsEnabled === "boolean"
+          ? p.hapticsEnabled
+          : DEFAULTS.hapticsEnabled,
       effectsVolume: clamp01(p.effectsVolume, DEFAULTS.effectsVolume),
       ambienceVolume: clamp01(p.ambienceVolume, DEFAULTS.ambienceVolume),
-      themeId: THEME_IDS.includes(p.themeId as ThemeId) ? (p.themeId as ThemeId) : DEFAULTS.themeId,
-      language: p.language === "ne" || p.language === "en" ? p.language : DEFAULTS.language,
+      themeId: THEME_IDS.includes(p.themeId as ThemeId)
+        ? (p.themeId as ThemeId)
+        : DEFAULTS.themeId,
+      language:
+        p.language === "ne" || p.language === "en"
+          ? p.language
+          : DEFAULTS.language,
     };
   } catch {
     return { ...DEFAULTS };

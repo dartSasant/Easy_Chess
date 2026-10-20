@@ -38,7 +38,7 @@ export const THEMES: Record<ThemeId, Theme> = {
   },
   cozy: {
     id: "cozy",
-    name: "Cozy & Warm",
+    name: "Cozy & Bear",
     tagline: "Wood and paper",
     pieceStyle: "gold-red",
     colors: {
@@ -68,7 +68,7 @@ export const THEMES: Record<ThemeId, Theme> = {
   },
   premium: {
     id: "premium",
-    name: "Modern & Premium",
+    name: "Greyish ",
     tagline: "Sleek and refined",
     pieceStyle: "classic",
     colors: {
@@ -83,7 +83,7 @@ export const THEMES: Record<ThemeId, Theme> = {
   },
   gadget: {
     id: "gadget",
-    name: "Gadget Buddy",
+    name: "Gadget",
     tagline: "Your robot friend",
     pieceStyle: "cream-moss",
     colors: {
