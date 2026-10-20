@@ -6,6 +6,8 @@
     "@expo/ui": "~58.0.20",
     "chess.js": "^1.4.0",
     "expo": "~58.0.14",
+    "expo-ble-kit": "^2.0.0",
+    "expo-build-properties": "~58.0.11",
     "expo-constants": "~58.0.12",
     "expo-crypto": "~58.0.7",
     "expo-dev-client": "~58.0.14",
