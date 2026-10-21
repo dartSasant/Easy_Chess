@@ -5,6 +5,7 @@ import { BOSS_LEVEL, BOT_PROFILES } from "@/core/bots";
 import { feedback } from "@/core/feedback";
 import { adsRemoved, isUnlocked } from "@/core/storage";
 import { BotPortrait } from "@/ui/campaign/botPortrait";
+import { PullString } from "@/ui/common/pullString";
 
 /** Bots per row. 5 per row gives 3 rows for 15 bots. */
 const COLUMNS = 5;
@@ -21,19 +22,7 @@ export function CampaignScreen({ beaten, onPlay, onBack }: Props) {
 
   return (
     <SafeAreaView className="flex-1 bg-canvas px-2">
-      <View className="mt-4 flex-row items-center justify-between">
-        <Pressable
-          onPress={() => {
-            feedback.nav();
-            onBack();
-          }}
-          className="rounded-lg bg-bar px-3 py-2"
-        >
-          <Text className="font-bold text-ink">Back</Text>
-        </Pressable>
-      </View>
-
-      <Text className="mt-4 text-xl font-bold text-ink">Play with a bot</Text>
+      <Text className="mt-16 text-xl font-bold text-ink">Play with a bot</Text>
       <Text className="mt-1 text-ink">
         {adsRemoved(beaten)
           ? "Ads removed."
@@ -48,7 +37,11 @@ export function CampaignScreen({ beaten, onPlay, onBack }: Props) {
             const isBoss = p.level === BOSS_LEVEL;
 
             return (
-              <View key={p.level} style={{ width: `${100 / COLUMNS}%` }} className="p-0.5">
+              <View
+                key={p.level}
+                style={{ width: `${100 / COLUMNS}%` }}
+                className="p-0.5"
+              >
                 <Pressable
                   disabled={!unlocked}
                   onPress={() => {
@@ -64,22 +57,33 @@ export function CampaignScreen({ beaten, onPlay, onBack }: Props) {
                     <BotPortrait level={p.level} animate={unlocked} />
 
                     <View className="absolute left-0.5 top-0.5 rounded-full bg-bar px-1">
-                      <Text className="text-[10px] font-bold text-ink">{p.level}</Text>
+                      <Text className="text-[10px] font-bold text-ink">
+                        {p.level}
+                      </Text>
                     </View>
 
                     {!unlocked && <Text className="absolute text-lg">🔒</Text>}
 
                     {done && (
                       <View className="absolute bottom-0.5 right-0.5 rounded-full bg-accent px-1">
-                        <Text className="text-[10px] font-bold text-ink">✓</Text>
+                        <Text className="text-[10px] font-bold text-ink">
+                          ✓
+                        </Text>
                       </View>
                     )}
                   </View>
 
-                  <Text numberOfLines={1} className="mt-1 text-xs font-bold text-ink">
+                  <Text
+                    numberOfLines={1}
+                    className="mt-1 text-xs font-bold text-ink"
+                  >
                     {p.name}
                   </Text>
-                  {isBoss && <Text className="text-[10px] font-bold text-danger">BOSS</Text>}
+                  {isBoss && (
+                    <Text className="text-[10px] font-bold text-danger">
+                      BOSS
+                    </Text>
+                  )}
                 </Pressable>
               </View>
             );
@@ -87,6 +91,8 @@ export function CampaignScreen({ beaten, onPlay, onBack }: Props) {
         </View>
         <View className="h-6" />
       </ScrollView>
+
+      <PullString onPull={onBack} />
     </SafeAreaView>
   );
 }

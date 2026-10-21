@@ -39,9 +39,13 @@ export function CampaignFlow({ onExit }: Props) {
         bot={active.bot}
         onResult={(result) => handleResult(active.level, result)}
         onRematch={() =>
-          setActive((a) => a && { ...a, color: randomColor(), round: a.round + 1 })
+          setActive(
+            (a) => a && { ...a, color: randomColor(), round: a.round + 1 },
+          )
         }
-        onNextBot={active.level < BOT_COUNT ? () => start(active.level + 1) : undefined}
+        onNextBot={
+          active.level < BOT_COUNT ? () => start(active.level + 1) : undefined
+        }
         onLeave={() => setActive(null)}
       />
     );

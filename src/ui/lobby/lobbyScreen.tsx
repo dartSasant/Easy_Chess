@@ -12,6 +12,7 @@ import {
   type BlockedPlayer,
 } from "@/core/storage/blocked";
 import { BleTransport } from "@/core/transport";
+import { PullString } from "@/ui/common/pullString";
 import { GamePopup } from "@/ui/game/gamePopups";
 import { GameScreen } from "@/ui/game/gameScreen";
 import { BounceButton } from "@/ui/home/bounceButton";
@@ -49,7 +50,12 @@ export function LobbyScreen({ playerName, onExit }: Props) {
   useEffect(() => {
     const off = transport.onEvent((e) => {
       if (e.kind === "log") {
-        setLogs((old) => [`${new Date().toLocaleTimeString()}  ${e.text}`, ...old].slice(0, 40));
+        setLogs((old) =>
+          [`${new Date().toLocaleTimeString()}  ${e.text}`, ...old].slice(
+            0,
+            40,
+          ),
+        );
       } else if (e.kind === "found") {
         // Soft ping when a phone we have not seen before appears.
         const fresh = e.devices.some((d) => !seen.current.has(d.id));
@@ -77,7 +83,11 @@ export function LobbyScreen({ playerName, onExit }: Props) {
         feedback.challengeAccepted();
         setChallenge(null);
         setWaitingId(null);
-        setGame({ localColor: e.localColor, opponentName: e.opponentName, round: 1 });
+        setGame({
+          localColor: e.localColor,
+          opponentName: e.opponentName,
+          round: 1,
+        });
       }
     });
     return () => {
@@ -99,12 +109,13 @@ export function LobbyScreen({ playerName, onExit }: Props) {
         transport={transport}
         opponentName={game.opponentName}
         onRematch={() =>
-          setGame((g) =>
-            g && {
-              ...g,
-              localColor: g.localColor === "w" ? "b" : "w",
-              round: g.round + 1,
-            },
+          setGame(
+            (g) =>
+              g && {
+                ...g,
+                localColor: g.localColor === "w" ? "b" : "w",
+                round: g.round + 1,
+              },
           )
         }
         onLeave={onExit}
@@ -157,36 +168,42 @@ export function LobbyScreen({ playerName, onExit }: Props) {
 
   return (
     <SafeAreaView className="flex-1 bg-canvas px-4">
-      <Pressable
-        onPress={() => {
-          feedback.nav();
-          onExit();
-        }}
-        className="mt-4 self-start rounded-lg bg-bar px-3 py-2"
-      >
-        <Text className="font-bold text-ink">Back</Text>
-      </Pressable>
+      <ScrollView
+        className="flex-1"
+        contentContainerClassName="pb-6 pt-16"
+      ></ScrollView>
+
+      <PullString onPull={onExit} />
 
       <ScrollView className="flex-1" contentContainerClassName="pb-6">
-        <Text className="mt-4 text-xl font-bold text-ink">Find an opponent</Text>
+        <Text className="mt-4 text-xl font-bold text-ink">
+          Find an opponent
+        </Text>
         <Text className="mt-1 text-ink">
-          Press Start on both phones. Nearby phones show up on the radar. Tap a dot to challenge
-          it.
+          Press Start on both phones. Nearby phones show up on the radar. Tap a
+          dot to challenge it.
         </Text>
 
         {!started ? (
           <View className="mt-6 items-start">
-            <BounceButton onPress={start} className="rounded-lg bg-accent px-6 py-3">
+            <BounceButton
+              onPress={start}
+              className="rounded-lg bg-accent px-6 py-3"
+            >
               <Text className="text-lg font-bold text-ink">Start</Text>
             </BounceButton>
           </View>
         ) : (
           <View className="mt-4">
-            <Radar devices={found} waitingId={waitingId} onSelect={challengePlayer} />
+            <Radar
+              devices={found}
+              waitingId={waitingId}
+              onSelect={challengePlayer}
+            />
             <Text className="mt-3 text-center text-ink">
               {waitingId
                 ? "Challenge sent. Waiting for an answer..."
-                : message ?? `Nearby phones: ${found.length}`}
+                : (message ?? `Nearby phones: ${found.length}`)}
             </Text>
           </View>
         )}
@@ -208,7 +225,9 @@ export function LobbyScreen({ playerName, onExit }: Props) {
             }}
             className="rounded-lg bg-bar px-3 py-2"
           >
-            <Text className="text-ink">{showLog ? "Hide log" : "Show log"}</Text>
+            <Text className="text-ink">
+              {showLog ? "Hide log" : "Show log"}
+            </Text>
           </Pressable>
         </View>
 
