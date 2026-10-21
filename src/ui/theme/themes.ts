@@ -111,6 +111,51 @@ export const THEMES: Record<ThemeId, Theme> = {
       squareDark: "#7C8591",
     },
   },
+  space: {
+    id: "space",
+    name: "Space",
+    tagline: "Quiet and starry",
+    pieceStyle: "classic",
+    colors: {
+      canvas: "#1B1F3B",
+      bar: "#2A2F57",
+      ink: "#EDEBFF",
+      accent: "#6F63E0",
+      danger: "#FF6B6B",
+      squareLight: "#C9CCF2",
+      squareDark: "#5B63B7",
+    },
+  },
+  jungle: {
+    id: "jungle",
+    name: "Jungle",
+    tagline: "Wild and leafy",
+    pieceStyle: "gold-green",
+    colors: {
+      canvas: "#BFD8A5",
+      bar: "#F1F6E4",
+      ink: "#1F3A22",
+      accent: "#F2B84B",
+      danger: "#C0392B",
+      squareLight: "#EAF2CF",
+      squareDark: "#4F8A4B",
+    },
+  },
+  halloween: {
+    id: "halloween",
+    name: "Spooky Night",
+    tagline: "Pumpkins and moonlight",
+    pieceStyle: "gold-red",
+    colors: {
+      canvas: "#2B1B54",
+      bar: "#3C2A72",
+      ink: "#FFE9C2",
+      accent: "#B84A0A",
+      danger: "#FF5A3C",
+      squareLight: "#F3DDB8",
+      squareDark: "#7A5CC2",
+    },
+  },
 };
 
 /** "#C8D5C4" -> "200 213 196" (the format the CSS variables need). */

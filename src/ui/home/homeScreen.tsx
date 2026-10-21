@@ -3,6 +3,7 @@ import { Animated, Pressable, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { feedback, playStartupOnce } from "@/core/feedback";
+import { Backdrop } from "@/ui/home/backdrop";
 import { BounceButton } from "@/ui/home/bounceButton";
 import { FloatingPieces } from "@/ui/home/floatingPieces";
 import { Mascot } from "@/ui/home/mascot";
@@ -64,6 +65,7 @@ export function HomeScreen({
 
   return (
     <SafeAreaView className="flex-1 bg-canvas px-6">
+      <Backdrop />
       <FloatingPieces />
 
       <View className="mt-2 flex-row justify-start">

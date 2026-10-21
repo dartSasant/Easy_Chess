@@ -1,11 +1,22 @@
 import type { ThemeId } from "../storage/settings";
 
 export type EffectId =
-  | "tap" | "nav" | "popup"
-  | "move" | "capture" | "check"
-  | "win" | "lose" | "draw" | "drawOffer"
-  | "error" | "playerFound" | "challenge" | "challengeAccepted"
-  | "confetti" | "newGame";
+  | "tap"
+  | "nav"
+  | "popup"
+  | "move"
+  | "capture"
+  | "check"
+  | "win"
+  | "lose"
+  | "draw"
+  | "drawOffer"
+  | "error"
+  | "playerFound"
+  | "challenge"
+  | "challengeAccepted"
+  | "confetti"
+  | "newGame";
 
 // Paths are relative to src/core/feedback -> project root /assets
 export const EFFECT_SOURCES: Record<EffectId, number> = {
@@ -27,13 +38,17 @@ export const EFFECT_SOURCES: Record<EffectId, number> = {
   newGame: require("../../../assets/sounds/effects/newGame.wav"),
 };
 
-export const STARTUP_SOURCES: Record<ThemeId, number> = {
-  zen: require("../../../assets/sounds/startup/startup_zen.wav"),
-  cozy: require("../../../assets/sounds/startup/startup_cozy.wav"),
-  playful: require("../../../assets/sounds/startup/startup_playful.wav"),
-  premium: require("../../../assets/sounds/startup/startup_premium.wav"),
-  gadget: require("../../../assets/sounds/startup/startup_gadget.wav"),
-  ninja: require("../../../assets/sounds/startup/startup_ninja.wav"),
-};
+const NATURE: number = require("../../../assets/sounds/ambience/ambience_nature.wav");
 
-export const AMBIENCE_SOURCE: number = require("../../../assets/sounds/ambience/ambience_nature.wav");
+// One music loop per theme. Themes without their own track use the nature loop.
+export const AMBIENCE_SOURCES: Record<ThemeId, number> = {
+  zen: require("../../../assets/sounds/ambience/ambience_zen.mp3"),
+  cozy: require("../../../assets/sounds/ambience/ambience_cozy.mp3"),
+  playful: require("../../../assets/sounds/ambience/ambience_playful.mp3"),
+  premium: NATURE,
+  gadget: require("../../../assets/sounds/ambience/ambience_gadget.mp3"),
+  ninja: NATURE,
+  space: require("../../../assets/sounds/ambience/ambience_space.mp3"),
+  jungle: require("../../../assets/sounds/ambience/ambience_jungle.mp3"),
+  halloween: NATURE,
+};

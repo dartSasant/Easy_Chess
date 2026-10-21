@@ -10,48 +10,31 @@ import {
   subscribeSettings,
   type ThemeId,
 } from "../storage/settings";
-import {
-  AMBIENCE_SOURCE,
-  EFFECT_SOURCES,
-  STARTUP_SOURCES,
-  type EffectId,
-} from "./sounds";
-
-/** Menu ambience loop is switched off. Set to true to bring it back. */
-const AMBIENCE_ENABLED = false;
+import { AMBIENCE_SOURCES, EFFECT_SOURCES, type EffectId } from "./sounds";
 
 let initPromise: Promise<void> | null = null;
 let appActive = true;
 let ambienceWanted = false;
-let startupPlaying = false;
-let startupDone = false;
+let launchDone = false;
 
 const effects: Partial<Record<EffectId, AudioPlayer>> = {};
 let ambience: AudioPlayer | null = null;
-let startup: AudioPlayer | null = null;
+let ambienceTheme: ThemeId | null = null;
 
-function stopStartup() {
-  const p = startup;
-  startup = null;
-  startupPlaying = false;
-  if (!p) return;
-  setTimeout(() => {
-    try {
-      p.pause();
-      p.release();
-    } catch {}
-  }, 0);
-}
-
+/** Plays the current theme's music loop, switching tracks if the theme changed. */
 function ensureAmbience() {
-  if (!AMBIENCE_ENABLED) return;
   const s = getSettings();
-  if (!ambienceWanted || !s.soundEnabled || !appActive || startupPlaying)
-    return;
+  if (!ambienceWanted || !s.soundEnabled || !appActive) return;
   try {
+    const src = AMBIENCE_SOURCES[s.themeId];
     if (!ambience) {
-      ambience = createAudioPlayer(AMBIENCE_SOURCE);
+      ambience = createAudioPlayer(src);
       ambience.loop = true;
+      ambienceTheme = s.themeId;
+    } else if (ambienceTheme !== s.themeId) {
+      ambience.replace(src);
+      ambience.loop = true;
+      ambienceTheme = s.themeId;
     }
     ambience.volume = s.ambienceVolume;
     ambience.play();
@@ -67,13 +50,13 @@ function pauseAmbience() {
 function onSettingsChange() {
   const s = getSettings();
   if (!s.soundEnabled) {
-    stopStartup();
     pauseAmbience();
     return;
   }
   try {
     if (ambience) ambience.volume = s.ambienceVolume;
   } catch {}
+  // A theme change lands here and switches the music to the new theme's track.
   ensureAmbience();
 }
 
@@ -116,34 +99,16 @@ export function playEffect(id: EffectId) {
   } catch {}
 }
 
-/** Theme startup sound; the menu ambience (if enabled) starts after it finishes. */
-export function playStartup(themeId?: ThemeId) {
-  const s = getSettings();
-  if (!s.soundEnabled) return;
-  stopStartup();
-  try {
-    const p = createAudioPlayer(STARTUP_SOURCES[themeId ?? s.themeId]);
-    startup = p;
-    startupPlaying = true;
-    p.volume = s.effectsVolume;
-    p.addListener("playbackStatusUpdate", (status) => {
-      if (status.didJustFinish && startup === p) {
-        stopStartup();
-        ensureAmbience();
-      }
-    });
-    p.play();
-  } catch {
-    startupPlaying = false;
-  }
+/** Called when a theme is picked. No startup sound anymore: just make sure the theme's music is playing. */
+export function playStartup(_themeId?: ThemeId) {
+  startAmbience();
 }
 
-/** Home screen calls this on mount: startup sound once per app launch. */
+/** Home screen calls this on mount: starts the music once per app launch. */
 export function playStartupOnce() {
-  if (startupDone) return;
-  startupDone = true;
+  if (launchDone) return;
+  launchDone = true;
   void initAudio().then(() => {
-    playStartup();
     startAmbience();
   });
 }

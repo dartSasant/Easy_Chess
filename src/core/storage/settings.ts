@@ -7,7 +7,10 @@ export type ThemeId =
   | "playful"
   | "premium"
   | "gadget"
-  | "ninja";
+  | "ninja"
+  | "space"
+  | "jungle"
+  | "halloween";
 export const THEME_IDS: ThemeId[] = [
   "zen",
   "cozy",
@@ -15,6 +18,9 @@ export const THEME_IDS: ThemeId[] = [
   "premium",
   "gadget",
   "ninja",
+  "space",
+  "jungle",
+  "halloween",
 ];
 
 export type Language = "en" | "ne";
