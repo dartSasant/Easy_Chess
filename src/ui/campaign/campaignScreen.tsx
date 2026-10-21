@@ -2,9 +2,9 @@ import { Pressable, ScrollView, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { BOSS_LEVEL, BOT_PROFILES } from "@/core/bots";
+import { feedback } from "@/core/feedback";
 import { adsRemoved, isUnlocked } from "@/core/storage";
 import { BotPortrait } from "@/ui/campaign/botPortrait";
-import { LanguageToggle } from "@/ui/campaign/languageToggle";
 
 /** Bots per row. 5 per row gives 3 rows for 15 bots. */
 const COLUMNS = 5;
@@ -22,10 +22,15 @@ export function CampaignScreen({ beaten, onPlay, onBack }: Props) {
   return (
     <SafeAreaView className="flex-1 bg-canvas px-2">
       <View className="mt-4 flex-row items-center justify-between">
-        <Pressable onPress={onBack} className="rounded-lg bg-bar px-3 py-2">
+        <Pressable
+          onPress={() => {
+            feedback.nav();
+            onBack();
+          }}
+          className="rounded-lg bg-bar px-3 py-2"
+        >
           <Text className="font-bold text-ink">Back</Text>
         </Pressable>
-        <LanguageToggle />
       </View>
 
       <Text className="mt-4 text-xl font-bold text-ink">Play with a bot</Text>
@@ -46,7 +51,10 @@ export function CampaignScreen({ beaten, onPlay, onBack }: Props) {
               <View key={p.level} style={{ width: `${100 / COLUMNS}%` }} className="p-0.5">
                 <Pressable
                   disabled={!unlocked}
-                  onPress={() => onPlay(p.level)}
+                  onPress={() => {
+                    feedback.tap();
+                    onPlay(p.level);
+                  }}
                   className={`items-center rounded-lg bg-bar p-1 ${
                     isBoss ? "border-2 border-danger" : ""
                   } ${unlocked ? "" : "opacity-40"}`}

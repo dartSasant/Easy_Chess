@@ -23,15 +23,14 @@ export const THEME_IDS: ThemeId[] = [
   "halloween",
 ];
 
-export type Language = "en" | "ne";
-
 export type Settings = {
   soundEnabled: boolean;
   hapticsEnabled: boolean;
+  /** The mascot peeks in from the screen edges (shake or at random). */
+  mascotEnabled: boolean;
   effectsVolume: number; // 0..1
   ambienceVolume: number; // 0..1
   themeId: ThemeId;
-  language: Language;
 };
 
 const KEY = "easychess.settings.v1";
@@ -39,10 +38,10 @@ const KEY = "easychess.settings.v1";
 const DEFAULTS: Settings = {
   soundEnabled: true,
   hapticsEnabled: true,
+  mascotEnabled: true,
   effectsVolume: 0.8,
   ambienceVolume: 0.35,
   themeId: "zen",
-  language: "en",
 };
 
 const clamp01 = (n: unknown, fallback: number) =>
@@ -52,6 +51,7 @@ function load(): Settings {
   try {
     const raw = Storage.getItemSync(KEY);
     if (!raw) return { ...DEFAULTS };
+    // Old saves may still contain a "language" key. It is simply ignored.
     const p = JSON.parse(raw) as Partial<Settings>;
     return {
       soundEnabled:
@@ -62,15 +62,15 @@ function load(): Settings {
         typeof p.hapticsEnabled === "boolean"
           ? p.hapticsEnabled
           : DEFAULTS.hapticsEnabled,
+      mascotEnabled:
+        typeof p.mascotEnabled === "boolean"
+          ? p.mascotEnabled
+          : DEFAULTS.mascotEnabled,
       effectsVolume: clamp01(p.effectsVolume, DEFAULTS.effectsVolume),
       ambienceVolume: clamp01(p.ambienceVolume, DEFAULTS.ambienceVolume),
       themeId: THEME_IDS.includes(p.themeId as ThemeId)
         ? (p.themeId as ThemeId)
         : DEFAULTS.themeId,
-      language:
-        p.language === "ne" || p.language === "en"
-          ? p.language
-          : DEFAULTS.language,
     };
   } catch {
     return { ...DEFAULTS };

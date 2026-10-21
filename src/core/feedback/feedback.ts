@@ -5,27 +5,33 @@ import { haptics } from "./haptics";
 export const feedback = {
   tap() { playEffect("tap"); haptics.tap(); },
   nav() { playEffect("nav"); haptics.tap(); },
-  popup() { playEffect("popup"); haptics.tap(); },
+  popup() { playEffect("popup"); haptics.popup(); },
   move() { playEffect("move"); haptics.move(); },
   capture() { playEffect("capture"); haptics.capture(); },
   check() { playEffect("check"); haptics.check(); },
   win() { playEffect("win"); haptics.success(); },
   lose() { playEffect("lose"); haptics.error(); },
   draw() { playEffect("draw"); haptics.tap(); },
-  drawOffer() { playEffect("drawOffer"); haptics.tap(); },
+  drawOffer() { playEffect("drawOffer"); haptics.popup(); },
   error() { playEffect("error"); haptics.error(); },
-  playerFound() { playEffect("playerFound"); haptics.tap(); },
+  playerFound() { playEffect("playerFound"); haptics.radar(); },
   challenge() { playEffect("challenge"); haptics.challenge(); },
   challengeAccepted() { playEffect("challengeAccepted"); haptics.success(); },
   confetti() { playEffect("confetti"); haptics.success(); },
-  newGame() { playEffect("newGame"); haptics.tap(); },
+  newGame() { playEffect("newGame"); haptics.start(); },
 };
 
-/** Pick the right sound for a move. Check beats capture, capture beats a plain move. */
-export function moveFeedback(info: { capture?: boolean; check?: boolean }) {
+/**
+ * Pick the right sound for a move. Check beats capture, capture beats a plain move.
+ * `remote` is true for the opponent's move: a plain move then gets the "your turn" haptic.
+ */
+export function moveFeedback(info: { capture?: boolean; check?: boolean; remote?: boolean }) {
   if (info.check) feedback.check();
   else if (info.capture) feedback.capture();
-  else feedback.move();
+  else if (info.remote) {
+    playEffect("move");
+    haptics.turn();
+  } else feedback.move();
 }
 
 /** Call when a game ends. `result` is from the local player's point of view. */

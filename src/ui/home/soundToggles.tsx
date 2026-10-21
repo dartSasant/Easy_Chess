@@ -5,10 +5,10 @@ import { feedback } from "@/core/feedback";
 import { updateSettings, useSettings } from "@/core/storage/settings";
 import { useTheme } from "@/ui/theme/useTheme";
 
-/** Small always-visible sound + vibration switches for the home screen. */
+/** Small always-visible sound, vibration and mascot switches for the home screen. */
 export function SoundToggles() {
   "use no memo";
-  const { soundEnabled, hapticsEnabled } = useSettings();
+  const { soundEnabled, hapticsEnabled, mascotEnabled } = useSettings();
   const ink = useTheme().colors.ink;
 
   return (
@@ -46,6 +46,25 @@ export function SoundToggles() {
       >
         <MaterialCommunityIcons
           name={hapticsEnabled ? "vibrate" : "vibrate-off"}
+          size={22}
+          color={ink}
+        />
+      </Pressable>
+
+      <Pressable
+        accessibilityRole="switch"
+        accessibilityLabel="Mascot peeks"
+        accessibilityState={{ checked: mascotEnabled }}
+        hitSlop={8}
+        className="h-11 w-11 items-center justify-center rounded-full bg-bar"
+        onPress={() => {
+          const next = !mascotEnabled;
+          updateSettings({ mascotEnabled: next });
+          if (next) feedback.tap();
+        }}
+      >
+        <MaterialCommunityIcons
+          name={mascotEnabled ? "ghost" : "ghost-off"}
           size={22}
           color={ink}
         />

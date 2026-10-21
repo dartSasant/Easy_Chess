@@ -1,10 +1,7 @@
-import { useState, type ComponentType } from "react";
-import { Text, View } from "react-native";
+import type { ComponentType } from "react";
 import Svg, { Circle, Ellipse, Line, Path, Rect } from "react-native-svg";
 
-import { feedback } from "@/core/feedback";
 import type { ThemeId } from "@/core/storage/settings";
-import { BounceButton } from "@/ui/home/bounceButton";
 import {
   CozyBear,
   HalloweenCat,
@@ -16,17 +13,6 @@ import {
 } from "@/ui/home/mascotArt";
 import type { ThemeColors } from "@/ui/theme/themes";
 import { useTheme } from "@/ui/theme/useTheme";
-
-const LINES = [
-  "Oh, you're back. Did you miss losing?",
-  "Welcome back! I rearranged the pieces so you can't blame them this time.",
-  "Look who thinks they're a grandmaster today.",
-  "Ready to lose with style? Let's go.",
-  "Fresh day, same moves. Impressive consistency.",
-  "Take your time. Not that it helps.",
-  "Stop poking me. I have feelings. Small ones.",
-  "Boop. Happy now?",
-];
 
 type P = { c: ThemeColors };
 
@@ -140,49 +126,16 @@ const ART: Record<ThemeId, ComponentType<P>> = {
   halloween: HalloweenCat,
 };
 
-/** Home-screen mascot with a speech bubble. Tap it for another line. */
-export function Mascot() {
+/** Size of every mascot drawing, in points. */
+export const MASCOT_SIZE = 110;
+
+/**
+ * Just the mascot drawing for the current theme (110 x 110).
+ * The peeking behaviour, speech bubble and theme menu live in src/ui/mascot/.
+ */
+export function MascotFigure() {
   "use no memo";
   const theme = useTheme();
-  const [line, setLine] = useState(
-    () => LINES[Math.floor(Math.random() * LINES.length)],
-  );
-
-  const c = theme.colors;
   const Art = ART[theme.id];
-
-  return (
-    <View className="items-center">
-      <View className="max-w-[260px] rounded-2xl bg-bar px-4 py-2">
-        <Text className="text-center text-sm text-ink">{line}</Text>
-      </View>
-      {/* little tail pointing at the mascot */}
-      <View
-        style={{
-          width: 0,
-          height: 0,
-          borderLeftWidth: 8,
-          borderRightWidth: 8,
-          borderTopWidth: 10,
-          borderLeftColor: "transparent",
-          borderRightColor: "transparent",
-          borderTopColor: c.bar,
-        }}
-      />
-      <BounceButton
-        accessibilityLabel="Mascot"
-        onPress={() => {
-          feedback.tap();
-          setLine((old) => {
-            let next = old;
-            while (next === old)
-              next = LINES[Math.floor(Math.random() * LINES.length)];
-            return next;
-          });
-        }}
-      >
-        <Art c={c} />
-      </BounceButton>
-    </View>
-  );
+  return <Art c={theme.colors} />;
 }

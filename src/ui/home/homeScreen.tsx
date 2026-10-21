@@ -6,9 +6,7 @@ import { feedback, playStartupOnce } from "@/core/feedback";
 import { Backdrop } from "@/ui/home/backdrop";
 import { BounceButton } from "@/ui/home/bounceButton";
 import { FloatingPieces } from "@/ui/home/floatingPieces";
-import { Mascot } from "@/ui/home/mascot";
 import { SoundToggles } from "@/ui/home/soundToggles";
-import { ThemePicker } from "@/ui/home/themePicker";
 
 type Props = {
   playerName: string;
@@ -89,11 +87,9 @@ export function HomeScreen({
           {/* TODO: replace this text with the logo image. */}
           <Text className="text-4xl font-bold text-ink">Easy Chess</Text>
         </Animated.View>
-        <Animated.View
-          style={{ opacity: logo, marginTop: 16, alignItems: "center" }}
-        >
-          <Mascot />
-        </Animated.View>
+
+        {/* The mascot is no longer part of this layout. It peeks in from the screen
+            edges (see src/ui/mascot/) and opens the theme menu when tapped. */}
 
         <Animated.View style={slideUp(buttons[0])}>
           <BounceButton
@@ -132,10 +128,6 @@ export function HomeScreen({
               Change name
             </Text>
           </Pressable>
-
-          <View className="mt-8">
-            <ThemePicker />
-          </View>
         </Animated.View>
       </View>
     </SafeAreaView>

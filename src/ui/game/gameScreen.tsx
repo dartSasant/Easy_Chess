@@ -19,7 +19,6 @@ import {
   type PromotionPiece,
   type Square,
 } from "@/core/game";
-import { useSettings } from "@/core/storage/settings";
 import type { BleTransport } from "@/core/transport";
 import { Board } from "@/ui/board/board";
 import { PieceView } from "@/ui/board/pieceView";
@@ -30,6 +29,8 @@ import { PlayerCard } from "@/ui/game/playerCard";
 import { useBotChatter } from "@/ui/game/useBotChatter";
 import { useGameClock } from "@/ui/game/useGameClock";
 import { Confetti, Trophy } from "@/ui/game/winCelebration";
+import { pickMascotLine } from "@/ui/mascot/mascotLines";
+import { requestMascotPeek, useMascotBlockedWhile } from "@/ui/mascot/mascotStore";
 import { useTheme } from "@/ui/theme/useTheme";
 
 const FILES = ["a", "b", "c", "d", "e", "f", "g", "h"];
@@ -84,9 +85,9 @@ function statusText(session: GameSession): string {
  * The move text (SAN) tells us about captures ("x") and checks ("+").
  * If the game just ended, the game-end sound plays instead.
  */
-function playMoveSound(session: GameSession, san: string) {
+function playMoveSound(session: GameSession, san: string, remote = false) {
   if (session.status().kind !== "playing") return;
-  moveFeedback({ capture: san.includes("x"), check: san.includes("+") });
+  moveFeedback({ capture: san.includes("x"), check: san.includes("+"), remote });
 }
 
 type Result = "win" | "loss" | "draw";
@@ -123,7 +124,6 @@ export function GameScreen({
 }: Props) {
   "use no memo";
   const theme = useTheme();
-  const { language } = useSettings();
   const [session] = useState(() => new GameSession(localColor));
   const [tick, setTick] = useState(0);
   const [selected, setSelected] = useState<Square | null>(null);
@@ -166,7 +166,6 @@ export function GameScreen({
     moves: session.history(),
     localColor,
     outcome,
-    language,
   });
 
   /** Ends the game by resignation, agreement or disconnect. The first ending wins. */
@@ -190,6 +189,15 @@ export function GameScreen({
     gameEndFeedback(outcome === "loss" ? "lose" : outcome);
   }, [outcome]);
 
+  // The mascot stays away while a game is in progress, then peeks in with a line when it ends.
+  useMascotBlockedWhile(!isOver);
+  const mascotSpoke = useRef(false);
+  useEffect(() => {
+    if (!outcome || mascotSpoke.current) return;
+    mascotSpoke.current = true;
+    requestMascotPeek({ line: pickMascotLine(outcome), delayMs: 1200 });
+  }, [outcome]);
+
   // Tell the campaign once when a bot game is over.
   useEffect(() => {
     if (!vsBot || !onResult || !outcome || reported.current) return;
@@ -209,7 +217,7 @@ export function GameScreen({
         if (cancelled || !move) return;
         const result = session.applyRemote(move);
         if (result.ok) {
-          playMoveSound(session, result.move.san);
+          playMoveSound(session, result.move.san, true);
           setTick((t) => t + 1);
         } else Alert.alert("Bot error", result.error);
       })
@@ -235,7 +243,7 @@ export function GameScreen({
             promotion: msg.promotion,
           });
           if (result.ok) {
-            playMoveSound(session, result.move.san);
+            playMoveSound(session, result.move.san, true);
             setDrawState("none");
             setTick((t) => t + 1);
           } else {

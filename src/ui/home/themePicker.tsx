@@ -1,6 +1,6 @@
 import { Pressable, Text, View } from "react-native";
 
-import { playStartup } from "@/core/feedback";
+import { haptics, playStartup } from "@/core/feedback";
 import {
   THEME_IDS,
   updateSettings,
@@ -8,13 +8,20 @@ import {
 } from "@/core/storage/settings";
 import { THEMES } from "@/ui/theme/themes";
 
-export function ThemePicker() {
+type Props = {
+  /** Show the small "Themes" heading (default true). */
+  showTitle?: boolean;
+};
+
+export function ThemePicker({ showTitle = true }: Props) {
   "use no memo";
   const { themeId } = useSettings();
 
   return (
     <View className="w-full">
-      <Text className="mb-2 text-center font-bold text-ink">Themes</Text>
+      {showTitle ? (
+        <Text className="mb-2 text-center font-bold text-ink">Themes</Text>
+      ) : null}
       <View className="flex-row flex-wrap justify-center gap-3 px-1">
         {THEME_IDS.map((id) => {
           const t = THEMES[id];
@@ -27,6 +34,7 @@ export function ThemePicker() {
               accessibilityLabel={`${t.name} theme`}
               onPress={() => {
                 if (selected) return;
+                haptics.pick();
                 updateSettings({ themeId: id });
                 playStartup(id);
               }}
