@@ -5,15 +5,18 @@ import {
   THEME_IDS,
   updateSettings,
   useSettings,
+  type ThemeId,
 } from "@/core/storage/settings";
 import { THEMES } from "@/ui/theme/themes";
 
 type Props = {
   /** Show the small "Themes" heading (default true). */
   showTitle?: boolean;
+  /** If given, called instead of switching the theme directly (used for the reveal animation). */
+  onPick?: (id: ThemeId) => void;
 };
 
-export function ThemePicker({ showTitle = true }: Props) {
+export function ThemePicker({ showTitle = true, onPick }: Props) {
   "use no memo";
   const { themeId } = useSettings();
 
@@ -34,6 +37,10 @@ export function ThemePicker({ showTitle = true }: Props) {
               accessibilityLabel={`${t.name} theme`}
               onPress={() => {
                 if (selected) return;
+                if (onPick) {
+                  onPick(id);
+                  return;
+                }
                 haptics.pick();
                 updateSettings({ themeId: id });
                 playStartup(id);

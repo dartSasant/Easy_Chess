@@ -9,12 +9,18 @@ import {
   StyleSheet,
   Text,
   View,
+  type GestureResponderHandlers,
 } from "react-native";
 
-import { haptics } from "@/core/feedback";
-import { useSettings } from "@/core/storage/settings";
+import { haptics, playStartup } from "@/core/feedback";
+import {
+  updateSettings,
+  useSettings,
+  type ThemeId,
+} from "@/core/storage/settings";
 import { MASCOT_SIZE, MascotFigure } from "@/ui/home/mascot";
 import { ThemePicker } from "@/ui/home/themePicker";
+import { THEMES } from "@/ui/theme/themes";
 import { useTheme } from "@/ui/theme/useTheme";
 
 import { pickMascotLine, type MascotLineKind } from "./mascotLines";
@@ -41,12 +47,31 @@ const MARGIN = 16;
 const FIRST_PEEK_MS: [number, number] = [1500, 2500]; // first visit after the app opens
 const NEXT_PEEK_MS: [number, number] = [20000, 20000]; // later random visits
 
+// The jump: now and then a random visit leaps to the opposite edge of the screen.
+const JUMP_CHANCE = 0.3; // chance that a random visit includes a jump
+const JUMP_AFTER_MS: [number, number] = [2200, 3800]; // how long into the visit it jumps
+const JUMP_MS = 460; // flight time
+const JUMP_ARC_PX = 70; // how high / wide the arc bows
+
 /** The drawing is upright. Turn it so its head always points into the screen. */
 const ROTATE: Record<Edge, string> = {
   bottom: "0deg",
   top: "180deg",
   left: "90deg",
   right: "-90deg",
+};
+const ROTATE_DEG: Record<Edge, number> = {
+  bottom: 0,
+  top: 180,
+  left: 90,
+  right: -90,
+};
+
+const OPPOSITE: Record<Edge, Edge> = {
+  top: "bottom",
+  bottom: "top",
+  left: "right",
+  right: "left",
 };
 
 /** Where the mascot waits, fully out of sight, before it slides in. */
@@ -67,11 +92,8 @@ const OUTWARD: Record<Edge, { x: number; y: number }> = {
 
 const rand = (min: number, max: number) => min + Math.random() * (max - min);
 
-/** A random edge (never the same twice in a row) and a spot on it. */
-function pickPlace(previous: Edge | null, w: number, h: number): Place {
-  const options = EDGES.filter((e) => e !== previous);
-  const edge = options[Math.floor(Math.random() * options.length)];
-
+/** A spot on the given edge. */
+function placeOnEdge(edge: Edge, w: number, h: number): Place {
   if (edge === "top") {
     // Stay near the middle: the clock and battery sit in the corners of the status bar.
     const spread = Math.min(w * 0.08, 24);
@@ -83,6 +105,13 @@ function pickPlace(previous: Edge | null, w: number, h: number): Place {
   // Left / right: keep away from the very top and bottom of the screen.
   const min = h * 0.18;
   return { edge, along: rand(min, Math.max(min, h * 0.82 - SIZE)) };
+}
+
+/** A random edge (never the same twice in a row) and a spot on it. */
+function pickPlace(previous: Edge | null, w: number, h: number): Place {
+  const options = EDGES.filter((e) => e !== previous);
+  const edge = options[Math.floor(Math.random() * options.length)];
+  return placeOnEdge(edge, w, h);
 }
 
 /** Where the mascot's square sits once it has slid in. */
@@ -97,6 +126,43 @@ function boxFor(p: Place, w: number, h: number): { left: number; top: number } {
     case "right":
       return { left: w - VISIBLE_PX, top: p.along };
   }
+}
+
+/** The flight from one landing spot to the other: a bowed arc plus a turn in the air. */
+function jumpMotion(
+  t: Animated.Value,
+  from: Place,
+  to: Place,
+  w: number,
+  h: number,
+) {
+  const a = boxFor(from, w, h);
+  const b = boxFor(to, w, h);
+  const vertical = from.edge === "top" || from.edge === "bottom";
+  // Bow toward the middle of the screen so the arc never leaves it.
+  const side = (a.left + b.left) / 2 + SIZE / 2 < w / 2 ? 1 : -1;
+
+  const steps = [0, 0.25, 0.5, 0.75, 1];
+  const arc = (s: number) => JUMP_ARC_PX * 4 * s * (1 - s);
+  const xs = steps.map(
+    (s) => a.left + (b.left - a.left) * s + (vertical ? side * arc(s) : 0),
+  );
+  const ys = steps.map(
+    (s) => a.top + (b.top - a.top) * s + (vertical ? 0 : -arc(s)),
+  );
+
+  const startDeg = ROTATE_DEG[from.edge];
+  // Top to bottom keeps turning the same way and lands upright (360 = 0).
+  const endDeg = from.edge === "top" ? 360 : ROTATE_DEG[to.edge];
+
+  return {
+    translateX: t.interpolate({ inputRange: steps, outputRange: xs }),
+    translateY: t.interpolate({ inputRange: steps, outputRange: ys }),
+    rotate: t.interpolate({
+      inputRange: [0, 1],
+      outputRange: [`${startDeg}deg`, `${endDeg}deg`],
+    }),
+  };
 }
 
 function tailStyle(dir: "up" | "down" | "left" | "right", color: string) {
@@ -151,20 +217,57 @@ type BubbleProps = {
   line: string;
   w: number;
   progress: Animated.Value;
+  drag: Animated.Value;
   color: string;
+  /** The same swipe handlers as the mascot: swiping the bubble sends both away. */
+  panHandlers: GestureResponderHandlers;
 };
 
-/** The speech bubble. It always stays upright and sits on the screen side of the mascot. */
-function SpeechBubble({ place, line, w, progress, color }: BubbleProps) {
+/**
+ * The speech bubble. It always stays upright and sits on the screen side of the mascot.
+ * It follows the mascot while it is pushed back, and only the bubble itself (not the empty
+ * space around it) takes touches.
+ */
+function SpeechBubble({
+  place,
+  line,
+  w,
+  progress,
+  drag,
+  color,
+  panHandlers,
+}: BubbleProps) {
   "use no memo";
-  const opacity = progress.interpolate({
+  const out = OUTWARD[place.edge];
+
+  const appear = progress.interpolate({
     inputRange: [0, 0.6, 1],
     outputRange: [0, 0, 1],
     extrapolate: "clamp",
   });
+  const fade = drag.interpolate({
+    inputRange: [0, OUT_PX],
+    outputRange: [1, 0],
+    extrapolate: "clamp",
+  });
+  const opacity = Animated.multiply(appear, fade);
+  const follow = [
+    {
+      translateX: drag.interpolate({
+        inputRange: [0, OUT_PX],
+        outputRange: [0, out.x * OUT_PX],
+      }),
+    },
+    {
+      translateY: drag.interpolate({
+        inputRange: [0, OUT_PX],
+        outputRange: [0, out.y * OUT_PX],
+      }),
+    },
+  ];
 
   const bubble = (
-    <View className="rounded-2xl bg-bar px-4 py-2">
+    <View {...panHandlers} className="rounded-2xl bg-bar px-4 py-2">
       <Text className="text-center text-sm text-ink">{line}</Text>
     </View>
   );
@@ -177,6 +280,7 @@ function SpeechBubble({ place, line, w, progress, color }: BubbleProps) {
     const shift = Math.max(-limit, Math.min(limit, mid - (left + bw / 2)));
     const tail = (
       <View
+        pointerEvents="none"
         style={[
           tailStyle(place.edge === "bottom" ? "down" : "up", color),
           { transform: [{ translateX: shift }] },
@@ -185,7 +289,7 @@ function SpeechBubble({ place, line, w, progress, color }: BubbleProps) {
     );
     return (
       <Animated.View
-        pointerEvents="none"
+        pointerEvents="box-none"
         style={[
           {
             position: "absolute",
@@ -193,6 +297,7 @@ function SpeechBubble({ place, line, w, progress, color }: BubbleProps) {
             width: bw,
             alignItems: "center",
             opacity,
+            transform: follow,
           },
           place.edge === "bottom"
             ? { bottom: VISIBLE_PX + GAP }
@@ -210,7 +315,7 @@ function SpeechBubble({ place, line, w, progress, color }: BubbleProps) {
   const onLeft = place.edge === "left";
   return (
     <Animated.View
-      pointerEvents="none"
+      pointerEvents="box-none"
       style={[
         {
           position: "absolute",
@@ -220,15 +325,20 @@ function SpeechBubble({ place, line, w, progress, color }: BubbleProps) {
           flexDirection: "row",
           alignItems: "center",
           opacity,
+          transform: follow,
         },
         onLeft
           ? { left: VISIBLE_PX + GAP }
           : { right: VISIBLE_PX + GAP, justifyContent: "flex-end" },
       ]}
     >
-      {onLeft ? <View style={tailStyle("left", color)} /> : null}
+      {onLeft ? (
+        <View pointerEvents="none" style={tailStyle("left", color)} />
+      ) : null}
       <View style={{ flexShrink: 1 }}>{bubble}</View>
-      {!onLeft ? <View style={tailStyle("right", color)} /> : null}
+      {!onLeft ? (
+        <View pointerEvents="none" style={tailStyle("right", color)} />
+      ) : null}
     </Animated.View>
   );
 }
@@ -250,8 +360,10 @@ const NO_CONTROLLER: Controller = {
  * The mascot overlay. Mounted once above all screens (see appFlow.tsx).
  *  - Peeks in from a random edge: when the phone is shaken and on a timer.
  *  - Says a line in a speech bubble.
- *  - Push it back toward its edge (or flick it): it goes away.
+ *  - Now and then a random visit jumps across the screen to the opposite edge.
+ *  - Push the mascot or its bubble back toward the edge (or flick it): both go away.
  *  - Tap it: the theme menu floats in from the mascot's side. Tap outside it or the mascot to close.
+ *  - Picking a theme reveals it as a circle growing from the mascot.
  *  - Stays away while a game is in progress (see mascotStore.ts) or when switched off.
  */
 export function MascotHost() {
@@ -264,13 +376,24 @@ export function MascotHost() {
   const [size, setSize] = useState({ w: 0, h: 0 });
   const sizeRef = useRef(size);
   const [peek, setPeek] = useState<{ place: Place; line: string } | null>(null);
+  const [jump, setJump] = useState<{ from: Place; to: Place } | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [menuMounted, setMenuMounted] = useState(false);
   const [menuFrom, setMenuFrom] = useState<Edge>("bottom");
   const [progress] = useState(() => new Animated.Value(0)); // 0 hidden, 1 peeking
   const [menuAnim] = useState(() => new Animated.Value(0)); // 0 closed, 1 open
   const [drag] = useState(() => new Animated.Value(0)); // how far it has been pushed back
-  const [dragging, setDragging] = useState(false);
+  const [jumpT] = useState(() => new Animated.Value(0)); // 0 takeoff, 1 landed
+  const [reveal, setReveal] = useState<{
+    color: string;
+    cx: number;
+    cy: number;
+    r: number;
+  } | null>(null);
+  const [revealScale] = useState(() => new Animated.Value(0));
+  const [revealOpacity] = useState(() => new Animated.Value(1));
+  const revealing = useRef(false);
+  const draggingRef = useRef(false);
   const edgeRef = useRef<Edge | null>(null);
   const menuOpenRef = useRef(false);
   const ctl = useRef<Controller>(NO_CONTROLLER);
@@ -281,9 +404,12 @@ export function MascotHost() {
 
     let alive = true;
     let visible = false;
+    let jumping = false;
     let lastEdge: Edge | null = null;
+    let current: { place: Place; line: string } | null = null;
     let hideTimer: ReturnType<typeof setTimeout> | undefined;
     let nextTimer: ReturnType<typeof setTimeout> | undefined;
+    let jumpTimer: ReturnType<typeof setTimeout> | undefined;
     const requestTimers = new Set<ReturnType<typeof setTimeout>>();
 
     const springIn = () =>
@@ -299,9 +425,24 @@ export function MascotHost() {
       nextTimer = setTimeout(() => show("peek"), rand(range[0], range[1]));
     }
 
+    /** Stops a jump that is planned or in the air. */
+    function cancelJump() {
+      clearTimeout(jumpTimer);
+      if (!jumping) return;
+      jumping = false;
+      jumpT.stopAnimation();
+      setJump(null);
+    }
+
     function hide() {
       clearTimeout(hideTimer);
       if (!visible) return;
+      if (jumping) {
+        // Never hide while it is in the air: try again right after landing.
+        hideTimer = setTimeout(hide, 250);
+        return;
+      }
+      clearTimeout(jumpTimer);
       Animated.timing(progress, {
         toValue: 0,
         duration: 320,
@@ -310,6 +451,7 @@ export function MascotHost() {
       }).start(({ finished }) => {
         if (!alive || !finished) return; // interrupted by a new visit
         visible = false;
+        current = null;
         setPeek(null);
         scheduleNext(NEXT_PEEK_MS);
       });
@@ -319,6 +461,40 @@ export function MascotHost() {
       clearTimeout(hideTimer);
       if (menuOpenRef.current) return; // it stays while the theme menu is open
       hideTimer = setTimeout(hide, ms);
+    }
+
+    /** Leap to the opposite edge. No stop in the middle. */
+    function jumpAcross() {
+      if (!alive || !visible || jumping || !current) return;
+      if (menuOpenRef.current || draggingRef.current || isMascotBlocked()) return;
+      const { w, h } = sizeRef.current;
+      if (w === 0 || h === 0) return;
+
+      const from = current.place;
+      const to = placeOnEdge(OPPOSITE[from.edge], w, h);
+      jumping = true;
+      clearTimeout(hideTimer); // it must not hide while in the air
+      jumpT.setValue(0);
+      setJump({ from, to });
+      haptics.pop();
+
+      Animated.timing(jumpT, {
+        toValue: 1,
+        duration: JUMP_MS,
+        easing: Easing.inOut(Easing.cubic),
+        useNativeDriver: true,
+      }).start(({ finished }) => {
+        if (!alive || !finished || !jumping) return;
+        jumping = false;
+        lastEdge = to.edge;
+        const line = current ? current.line : "";
+        current = { place: to, line };
+        // Landed: the normal peeking mascot takes over at exactly this spot.
+        setPeek({ place: to, line });
+        setJump(null);
+        haptics.peek();
+        holdThenHide(3500);
+      });
     }
 
     function show(kind: MascotLineKind, forcedLine?: string) {
@@ -335,6 +511,7 @@ export function MascotHost() {
 
       if (visible) {
         // Already peeking: new line, stay a bit longer.
+        if (current) current = { ...current, line };
         setPeek((p) => (p ? { ...p, line } : p));
         haptics.bubble();
         progress.stopAnimation();
@@ -345,6 +522,7 @@ export function MascotHost() {
 
       const place = pickPlace(lastEdge, w, h);
       lastEdge = place.edge;
+      current = { place, line };
       visible = true;
       progress.stopAnimation();
       progress.setValue(0);
@@ -353,6 +531,12 @@ export function MascotHost() {
       haptics.peek();
       springIn();
       holdThenHide(hold);
+
+      // Only the random visits jump, never shake or game-result visits.
+      if (kind === "peek" && forcedLine === undefined && Math.random() < JUMP_CHANCE) {
+        clearTimeout(jumpTimer);
+        jumpTimer = setTimeout(jumpAcross, rand(JUMP_AFTER_MS[0], JUMP_AFTER_MS[1]));
+      }
     }
 
     function handlePending() {
@@ -378,7 +562,9 @@ export function MascotHost() {
       dismiss: () => {
         clearTimeout(hideTimer);
         if (!visible) return;
+        cancelJump();
         visible = false;
+        current = null;
         progress.stopAnimation();
         progress.setValue(0);
         setPeek(null);
@@ -398,10 +584,12 @@ export function MascotHost() {
       }
       clearTimeout(nextTimer);
       clearTimeout(hideTimer);
+      cancelJump();
       if (visible) {
         progress.stopAnimation();
         progress.setValue(0);
         visible = false;
+        current = null;
         setPeek(null);
       }
     });
@@ -409,21 +597,25 @@ export function MascotHost() {
     return () => {
       alive = false;
       visible = false;
+      jumping = false;
       clearTimeout(hideTimer);
       clearTimeout(nextTimer);
+      clearTimeout(jumpTimer);
       requestTimers.forEach(clearTimeout);
       offRequest();
       appSub.remove();
       progress.stopAnimation();
+      jumpT.stopAnimation();
       ctl.current = NO_CONTROLLER;
+      setJump(null);
       setPeek(null);
     };
-  }, [active, progress, drag]);
+  }, [active, progress, drag, jumpT]);
 
   // Shake the phone: the mascot peeks in.
   useShake(active, () => ctl.current.show("shake"));
 
-  // ---- push it back to make it go away -------------------------------------------------
+  // ---- push it back to make it go away (the mascot or its bubble) ------------------------
   useEffect(() => {
     edgeRef.current = peek?.place.edge ?? null;
   }, [peek]);
@@ -441,7 +633,7 @@ export function MascotHost() {
       onMoveShouldSetPanResponderCapture: (_, g) =>
         !menuOpenRef.current && pushOf(g.dx, g.dy) > 6,
       onPanResponderGrant: () => {
-        setDragging(true);
+        draggingRef.current = true;
         ctl.current.pause();
       },
       onPanResponderMove: (_, g) => {
@@ -459,7 +651,7 @@ export function MascotHost() {
             useNativeDriver: true,
           }).start(() => {
             ctl.current.dismiss();
-            setDragging(false);
+            draggingRef.current = false;
             drag.setValue(0);
           });
         } else {
@@ -469,13 +661,13 @@ export function MascotHost() {
             tension: 120,
             useNativeDriver: true,
           }).start();
-          setDragging(false);
+          draggingRef.current = false;
           ctl.current.resume();
         }
       },
       onPanResponderTerminate: () => {
         Animated.spring(drag, { toValue: 0, useNativeDriver: true }).start();
-        setDragging(false);
+        draggingRef.current = false;
         ctl.current.resume();
       },
     });
@@ -521,6 +713,55 @@ export function MascotHost() {
     else openMenu();
   };
 
+  // ---- theme reveal: a circle in the new theme's color grows from the mascot -----------------
+  const pickTheme = (id: ThemeId) => {
+    if (revealing.current) return;
+    revealing.current = true;
+
+    const { w, h } = sizeRef.current;
+    const b = peek ? boxFor(peek.place, w, h) : null;
+    const cx = b ? b.left + SIZE / 2 : w / 2;
+    const cy = b ? b.top + SIZE / 2 : h / 2;
+    const r = Math.hypot(Math.max(cx, w - cx), Math.max(cy, h - cy));
+
+    revealScale.setValue(0);
+    revealOpacity.setValue(1);
+    setReveal({ color: THEMES[id].colors.canvas, cx, cy, r });
+    haptics.pick();
+
+    Animated.timing(revealScale, {
+      toValue: 1,
+      duration: 520,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }).start(({ finished }) => {
+      if (!finished) {
+        setReveal(null);
+        revealing.current = false;
+        return;
+      }
+      // The circle now covers the screen: swap the theme underneath it.
+      updateSettings({ themeId: id });
+      playStartup(id);
+      Animated.timing(revealOpacity, {
+        toValue: 0,
+        duration: 260,
+        useNativeDriver: true,
+      }).start(() => {
+        setReveal(null);
+        revealing.current = false;
+      });
+    });
+  };
+
+  useEffect(
+    () => () => {
+      revealScale.stopAnimation();
+      revealOpacity.stopAnimation();
+    },
+    [revealScale, revealOpacity],
+  );
+
   // If the mascot gets blocked or switched off while the menu is open, close it at once.
   useEffect(() => {
     if (active || !menuOpenRef.current) return;
@@ -549,6 +790,7 @@ export function MascotHost() {
   const box = place ? boxFor(place, w, h) : null;
   const hidden = place ? HIDDEN_SHIFT[place.edge] : { x: 0, y: 0 };
   const outward = place ? OUTWARD[place.edge] : { x: 0, y: 0 };
+  const flight = jump ? jumpMotion(jumpT, jump.from, jump.to, w, h) : null;
 
   const panelW = Math.min(w - 48, 360);
   const fromX =
@@ -568,6 +810,23 @@ export function MascotHost() {
         );
       }}
     >
+      {reveal ? (
+        <Animated.View
+          pointerEvents="none"
+          style={{
+            position: "absolute",
+            left: reveal.cx - reveal.r,
+            top: reveal.cy - reveal.r,
+            width: reveal.r * 2,
+            height: reveal.r * 2,
+            borderRadius: reveal.r,
+            backgroundColor: reveal.color,
+            opacity: revealOpacity,
+            transform: [{ scale: revealScale }],
+          }}
+        />
+      ) : null}
+
       {menuMounted ? (
         <Animated.View
           style={[
@@ -594,7 +853,7 @@ export function MascotHost() {
         </Animated.View>
       ) : null}
 
-      {peek && place && box ? (
+      {peek && place && box && !jump ? (
         <>
           <Animated.View
             {...pan.panHandlers}
@@ -644,16 +903,38 @@ export function MascotHost() {
             </Pressable>
           </Animated.View>
 
-          {!menuOpen && !dragging ? (
+          {!menuOpen ? (
             <SpeechBubble
               place={place}
               line={peek.line}
               w={w}
               progress={progress}
+              drag={drag}
               color={bar}
+              panHandlers={pan.panHandlers}
             />
           ) : null}
         </>
+      ) : null}
+
+      {flight ? (
+        <Animated.View
+          pointerEvents="none"
+          style={{
+            position: "absolute",
+            left: 0,
+            top: 0,
+            width: SIZE,
+            height: SIZE,
+            transform: [
+              { translateX: flight.translateX },
+              { translateY: flight.translateY },
+              { rotate: flight.rotate },
+            ],
+          }}
+        >
+          <MascotFigure />
+        </Animated.View>
       ) : null}
 
       {menuMounted ? (
@@ -707,7 +988,7 @@ export function MascotHost() {
               <Text className="mb-3 text-center text-base font-bold text-ink">
                 Pick a theme
               </Text>
-              <ThemePicker showTitle={false} />
+              <ThemePicker showTitle={false} onPick={pickTheme} />
             </View>
           </Animated.View>
         </View>
