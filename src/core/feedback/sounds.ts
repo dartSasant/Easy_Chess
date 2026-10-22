@@ -38,17 +38,15 @@ export const EFFECT_SOURCES: Record<EffectId, number> = {
   newGame: require("../../../assets/sounds/effects/newGame.wav"),
 };
 
-const NATURE: number = require("../../../assets/sounds/ambience/ambience_nature.wav");
-
-// One music loop per theme. Themes without their own track use the nature loop.
+// One music loop per theme.
 export const AMBIENCE_SOURCES: Record<ThemeId, number> = {
   zen: require("../../../assets/sounds/ambience/ambience_zen.mp3"),
   cozy: require("../../../assets/sounds/ambience/ambience_cozy.mp3"),
   playful: require("../../../assets/sounds/ambience/ambience_playful.mp3"),
-  premium: NATURE,
+  premium: require("../../../assets/sounds/ambience/ambience_premium.mp3"),
   gadget: require("../../../assets/sounds/ambience/ambience_gadget.mp3"),
-  ninja: NATURE,
+  ninja: require("../../../assets/sounds/ambience/ambience_ninja.mp3"),
   space: require("../../../assets/sounds/ambience/ambience_space.mp3"),
   jungle: require("../../../assets/sounds/ambience/ambience_jungle.mp3"),
-  halloween: NATURE,
+  halloween: require("../../../assets/sounds/ambience/ambience_halloween.mp3"),
 };

@@ -21,23 +21,32 @@ const effects: Partial<Record<EffectId, AudioPlayer>> = {};
 let ambience: AudioPlayer | null = null;
 let ambienceTheme: ThemeId | null = null;
 
-/** Plays the current theme's music loop, switching tracks if the theme changed. */
+/**
+ * Plays the current theme's music loop. When the theme changed, a fresh player is created
+ * for the new track and the old one is stopped and released (swapping the track on one
+ * player is not reliable on every device).
+ */
 function ensureAmbience() {
   const s = getSettings();
   if (!ambienceWanted || !s.soundEnabled || !appActive) return;
   try {
-    const src = AMBIENCE_SOURCES[s.themeId];
-    if (!ambience) {
-      ambience = createAudioPlayer(src);
-      ambience.loop = true;
+    if (!ambience || ambienceTheme !== s.themeId) {
+      const old = ambience;
+      const next = createAudioPlayer(AMBIENCE_SOURCES[s.themeId]);
+      next.loop = true;
+      ambience = next;
       ambienceTheme = s.themeId;
-    } else if (ambienceTheme !== s.themeId) {
-      ambience.replace(src);
-      ambience.loop = true;
-      ambienceTheme = s.themeId;
+      if (old) {
+        try {
+          old.pause();
+          old.remove();
+        } catch {}
+      }
     }
-    ambience.volume = s.ambienceVolume;
-    ambience.play();
+    if (ambience) {
+      ambience.volume = s.ambienceVolume;
+      ambience.play();
+    }
   } catch {}
 }
 
