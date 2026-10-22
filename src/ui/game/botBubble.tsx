@@ -3,7 +3,7 @@ import { Text, View } from "react-native";
 import { BotPortrait } from "@/ui/campaign/botPortrait";
 import type { Chat } from "./useBotChatter";
 
-const BADGE = { neutral: "", happy: "😂😂😂", sad: "😭" } as const;
+const BADGE = { neutral: "", happy: "😂", sad: "😭" } as const;
 
 export function BotBubble({ level, chat }: { level: number; chat: Chat }) {
   return (

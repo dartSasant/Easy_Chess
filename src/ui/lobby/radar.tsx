@@ -1,6 +1,13 @@
 import type { ScanResult } from "expo-ble-kit";
 import { useEffect, useState } from "react";
-import { Animated, Easing, Pressable, Text, View, useWindowDimensions } from "react-native";
+import {
+  Animated,
+  Easing,
+  Pressable,
+  Text,
+  View,
+  useWindowDimensions,
+} from "react-native";
 
 import { useTheme } from "@/ui/theme/useTheme";
 
@@ -10,7 +17,15 @@ function hash(id: string): number {
   return h;
 }
 
-function Pulse({ delay, size, color }: { delay: number; size: number; color: string }) {
+function Pulse({
+  delay,
+  size,
+  color,
+}: {
+  delay: number;
+  size: number;
+  color: string;
+}) {
   "use no memo";
   const [t] = useState(() => new Animated.Value(0));
 
@@ -20,7 +35,7 @@ function Pulse({ delay, size, color }: { delay: number; size: number; color: str
       Animated.loop(
         Animated.timing(t, {
           toValue: 1,
-          duration: 2600,
+          duration: 2800,
           easing: Easing.out(Easing.quad),
           useNativeDriver: true,
         }),
@@ -40,8 +55,13 @@ function Pulse({ delay, size, color }: { delay: number; size: number; color: str
         borderRadius: size / 2,
         borderWidth: 2,
         borderColor: color,
-        opacity: t.interpolate({ inputRange: [0, 1], outputRange: [0.6, 0] }),
-        transform: [{ scale: t.interpolate({ inputRange: [0, 1], outputRange: [0.1, 1] }) }],
+        backgroundColor: `${color}22`,
+        opacity: t.interpolate({ inputRange: [0, 1], outputRange: [0.7, 0] }),
+        transform: [
+          {
+            scale: t.interpolate({ inputRange: [0, 1], outputRange: [0.1, 1] }),
+          },
+        ],
       }}
     />
   );
@@ -53,7 +73,12 @@ function Glow({ color }: { color: string }) {
 
   useEffect(() => {
     const loop = Animated.loop(
-      Animated.timing(t, { toValue: 1, duration: 1400, easing: Easing.out(Easing.quad), useNativeDriver: true }),
+      Animated.timing(t, {
+        toValue: 1,
+        duration: 1500,
+        easing: Easing.out(Easing.quad),
+        useNativeDriver: true,
+      }),
     );
     loop.start();
     return () => loop.stop();
@@ -64,12 +89,16 @@ function Glow({ color }: { color: string }) {
       pointerEvents="none"
       style={{
         position: "absolute",
-        width: 36,
-        height: 36,
-        borderRadius: 18,
+        width: 40,
+        height: 40,
+        borderRadius: 20,
         backgroundColor: color,
-        opacity: t.interpolate({ inputRange: [0, 1], outputRange: [0.5, 0] }),
-        transform: [{ scale: t.interpolate({ inputRange: [0, 1], outputRange: [0.5, 1.6] }) }],
+        opacity: t.interpolate({ inputRange: [0, 1], outputRange: [0.45, 0] }),
+        transform: [
+          {
+            scale: t.interpolate({ inputRange: [0, 1], outputRange: [0.5, 1.7] }),
+          },
+        ],
       }}
     />
   );
@@ -79,21 +108,30 @@ type Props = {
   devices: ScanResult[];
   /** Id of the phone we challenged and are waiting for. */
   waitingId: string | null;
+  /** Pulses only run while the lobby is searching. */
+  active: boolean;
   onSelect: (id: string) => void;
 };
 
-export function Radar({ devices, waitingId, onSelect }: Props) {
+// Soft discs, biggest first. Alpha is a hex pair added to the theme color.
+const DISCS: { f: number; fill: string }[] = [
+  { f: 1, fill: "14" },
+  { f: 0.72, fill: "1C" },
+  { f: 0.44, fill: "28" },
+];
+
+export function Radar({ devices, waitingId, active, onSelect }: Props) {
   "use no memo";
   const { width } = useWindowDimensions();
   const c = useTheme().colors;
-  const size = Math.min(width - 32, 320);
+  const size = Math.min(width - 40, 340);
   const radius = size / 2;
 
   return (
     <View className="items-center">
       <View style={{ width: size, height: size }}>
-        {/* Rings */}
-        {[1, 0.66, 0.33].map((f) => (
+        {/* Soft discs and thin rings, no solid background */}
+        {DISCS.map(({ f, fill }) => (
           <View
             key={f}
             pointerEvents="none"
@@ -104,32 +142,56 @@ export function Radar({ devices, waitingId, onSelect }: Props) {
               width: size * f,
               height: size * f,
               borderRadius: (size * f) / 2,
+              backgroundColor: `${c.accent}${fill}`,
               borderWidth: 1,
-              borderColor: c.ink,
-              opacity: 0.2,
+              borderColor: `${c.ink}1F`,
             }}
           />
         ))}
 
         {/* The sweeping pulses */}
-        <View style={{ position: "absolute", left: 0, top: 0, width: size, height: size, alignItems: "center", justifyContent: "center" }}>
-          <Pulse delay={0} size={size} color={c.accent} />
-          <Pulse delay={1300} size={size} color={c.accent} />
-        </View>
+        {active ? (
+          <View
+            pointerEvents="none"
+            style={{
+              position: "absolute",
+              left: 0,
+              top: 0,
+              width: size,
+              height: size,
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+          >
+            <Pulse delay={0} size={size} color={c.accent} />
+            <Pulse delay={1400} size={size} color={c.accent} />
+          </View>
+        ) : null}
 
         {/* You */}
         <View
           pointerEvents="none"
           style={{
             position: "absolute",
-            left: radius - 7,
-            top: radius - 7,
-            width: 14,
-            height: 14,
-            borderRadius: 7,
-            backgroundColor: c.ink,
+            left: radius - 15,
+            top: radius - 15,
+            width: 30,
+            height: 30,
+            borderRadius: 15,
+            backgroundColor: `${c.accent}66`,
+            alignItems: "center",
+            justifyContent: "center",
           }}
-        />
+        >
+          <View
+            style={{
+              width: 14,
+              height: 14,
+              borderRadius: 7,
+              backgroundColor: c.ink,
+            }}
+          />
+        </View>
 
         {/* Nearby phones */}
         {devices.map((d, i) => {
@@ -148,10 +210,10 @@ export function Radar({ devices, waitingId, onSelect }: Props) {
               disabled={waitingId !== null}
               style={{
                 position: "absolute",
-                left: x - 26,
-                top: y - 26,
-                width: 52,
-                height: 52,
+                left: x - 28,
+                top: y - 28,
+                width: 56,
+                height: 56,
                 alignItems: "center",
                 justifyContent: "center",
               }}
@@ -159,17 +221,36 @@ export function Radar({ devices, waitingId, onSelect }: Props) {
               <Glow color={c.accent} />
               <View
                 style={{
-                  width: 18,
-                  height: 18,
-                  borderRadius: 9,
+                  width: 22,
+                  height: 22,
+                  borderRadius: 11,
                   backgroundColor: c.accent,
-                  borderWidth: waiting ? 3 : 2,
-                  borderColor: c.ink,
+                  borderWidth: waiting ? 4 : 3,
+                  borderColor: waiting ? c.ink : c.bar,
+                  shadowColor: "#000",
+                  shadowOpacity: 0.2,
+                  shadowRadius: 4,
+                  shadowOffset: { width: 0, height: 2 },
+                  elevation: 3,
                 }}
               />
-              <Text style={{ position: "absolute", top: 44, fontSize: 10, color: c.ink, width: 70, textAlign: "center" }}>
-                {waiting ? "Waiting..." : `Player ${i + 1}`}
-              </Text>
+              <View
+                style={{
+                  position: "absolute",
+                  top: 46,
+                  backgroundColor: c.bar,
+                  borderRadius: 999,
+                  paddingHorizontal: 8,
+                  paddingVertical: 2,
+                }}
+              >
+                <Text
+                  numberOfLines={1}
+                  style={{ fontSize: 11, fontWeight: "700", color: c.ink }}
+                >
+                  {waiting ? "Waiting..." : `Player ${i + 1}`}
+                </Text>
+              </View>
             </Pressable>
           );
         })}

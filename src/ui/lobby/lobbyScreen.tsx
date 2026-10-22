@@ -166,81 +166,87 @@ export function LobbyScreen({ playerName, onExit }: Props) {
     setChallenge(null);
   };
 
+  const status = waitingId
+    ? "Challenge sent. Waiting for an answer..."
+    : (message ?? `Nearby phones: ${found.length}`);
+
   return (
-    <SafeAreaView className="flex-1 bg-canvas px-4">
+    <SafeAreaView className="flex-1 bg-canvas px-5">
       <ScrollView
         className="flex-1"
-        contentContainerClassName="pb-6 pt-16"
-      ></ScrollView>
-
-      <PullString onPull={onExit} />
-
-      <ScrollView className="flex-1" contentContainerClassName="pb-6">
-        <Text className="mt-4 text-xl font-bold text-ink">
+        contentContainerClassName="pb-8 pt-14"
+        showsVerticalScrollIndicator={false}
+      >
+        <Text className="text-3xl font-extrabold text-ink">
           Find an opponent
         </Text>
-        <Text className="mt-1 text-ink">
+        <Text className="mt-2 text-base leading-6 text-ink/70">
           Press Start on both phones. Nearby phones show up on the radar. Tap a
           dot to challenge it.
         </Text>
 
+        <View className="mt-6">
+          <Radar
+            devices={found}
+            waitingId={waitingId}
+            active={started}
+            onSelect={challengePlayer}
+          />
+        </View>
+
         {!started ? (
-          <View className="mt-6 items-start">
+          <View className="mt-6 items-center">
             <BounceButton
               onPress={start}
-              className="rounded-lg bg-accent px-6 py-3"
+              className="rounded-full bg-accent px-12 py-4"
             >
-              <Text className="text-lg font-bold text-ink">Start</Text>
+              <Text className="text-xl font-extrabold text-ink">Start</Text>
             </BounceButton>
           </View>
         ) : (
-          <View className="mt-4">
-            <Radar
-              devices={found}
-              waitingId={waitingId}
-              onSelect={challengePlayer}
-            />
-            <Text className="mt-3 text-center text-ink">
-              {waitingId
-                ? "Challenge sent. Waiting for an answer..."
-                : (message ?? `Nearby phones: ${found.length}`)}
-            </Text>
+          <View className="mt-5 flex-row items-center self-center rounded-full bg-bar px-4 py-2">
+            <View className="mr-2 h-2.5 w-2.5 rounded-full bg-accent" />
+            <Text className="text-sm font-semibold text-ink">{status}</Text>
           </View>
         )}
 
-        <View className="mt-4 flex-row">
+        <View className="mt-8 flex-row justify-center">
           <Pressable
             onPress={() => {
               feedback.tap();
               setShowBlocked(true);
             }}
-            className="mr-2 rounded-lg bg-bar px-3 py-2"
+            className="mr-3 rounded-full border border-ink/10 bg-bar px-4 py-2"
           >
-            <Text className="text-ink">Blocked players ({blocked.length})</Text>
+            <Text className="text-sm font-semibold text-ink">
+              Blocked players ({blocked.length})
+            </Text>
           </Pressable>
           <Pressable
             onPress={() => {
               feedback.tap();
               setShowLog((v) => !v);
             }}
-            className="rounded-lg bg-bar px-3 py-2"
+            className="rounded-full border border-ink/10 bg-bar px-4 py-2"
           >
-            <Text className="text-ink">
+            <Text className="text-sm font-semibold text-ink">
               {showLog ? "Hide log" : "Show log"}
             </Text>
           </Pressable>
         </View>
 
         {showLog && (
-          <View className="mt-3 rounded-lg bg-bar p-2">
+          <View className="mt-4 rounded-2xl bg-bar p-3">
             {logs.map((line, i) => (
-              <Text key={i} className="text-xs text-ink">
+              <Text key={i} className="text-xs text-ink/80">
                 {line}
               </Text>
             ))}
           </View>
         )}
       </ScrollView>
+
+      <PullString onPull={onExit} />
 
       {/* The challenge sound and vibration already played, so the popup stays quiet. */}
       <GamePopup
