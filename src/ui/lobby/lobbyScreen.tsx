@@ -235,7 +235,7 @@ export function LobbyScreen({ playerName, onExit }: Props) {
           </Pressable>
         </View>
 
-        {showLog && (
+        {showLog && logs.length > 0 && (
           <View className="mt-4 rounded-2xl bg-bar p-3">
             {logs.map((line, i) => (
               <Text key={i} className="text-xs text-ink/80">

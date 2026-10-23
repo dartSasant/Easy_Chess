@@ -12,14 +12,14 @@ const LEFT = 20;
 
 type Props = {
   onPull: () => void;
-  /** Drop in from above with a bounce when it first appears, then give a small hint tug. */
+  /** Drop in from above with a bounce when it first appears, then give a small hint tug. On by default. */
   entrance?: boolean;
   /** String length when idle. Shorter strings fit into a small space. */
   rest?: number;
 };
 
 /** A string with a knob hanging from the top-left. Pull it down to go back. */
-export function PullString({ onPull, entrance = false, rest = REST }: Props) {
+export function PullString({ onPull, entrance = true, rest = REST }: Props) {
   "use no memo";
   const insets = useSafeAreaInsets();
   const [pull] = useState(() => new Animated.Value(0));

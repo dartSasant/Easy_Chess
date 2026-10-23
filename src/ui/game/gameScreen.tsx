@@ -28,8 +28,7 @@ import { MoveList } from "@/ui/game/moveList";
 import { PlayerCard } from "@/ui/game/playerCard";
 import { useGameClock } from "@/ui/game/useGameClock";
 import { Confetti, Trophy } from "@/ui/game/winCelebration";
-import { pickMascotLine } from "@/ui/mascot/mascotLines";
-import { requestMascotPeek, useMascotBlockedWhile } from "@/ui/mascot/mascotStore";
+import { useMascotBlockedWhile } from "@/ui/mascot/mascotStore";
 import { useTheme } from "@/ui/theme/useTheme";
 
 const FILES = ["a", "b", "c", "d", "e", "f", "g", "h"];
@@ -182,14 +181,8 @@ export function GameScreen({
     gameEndFeedback(outcome === "loss" ? "lose" : outcome);
   }, [outcome]);
 
-  // The mascot stays away while a game is in progress, then peeks in with a line when it ends.
-  useMascotBlockedWhile(!isOver);
-  const mascotSpoke = useRef(false);
-  useEffect(() => {
-    if (!outcome || mascotSpoke.current) return;
-    mascotSpoke.current = true;
-    requestMascotPeek({ line: pickMascotLine(outcome), delayMs: 1200 });
-  }, [outcome]);
+  // The mascot never shows while the board is on screen, not even after the game ends.
+  useMascotBlockedWhile(true);
 
   // Tell the campaign once when a bot game is over.
   useEffect(() => {
@@ -483,17 +476,6 @@ export function GameScreen({
                   <Text className="font-bold text-ink">Next opponent</Text>
                 </Pressable>
               )}
-              {vsBot && onRematch && (
-                <Pressable
-                  onPress={() => {
-                    feedback.nav();
-                    onRematch();
-                  }}
-                  className="mr-2 rounded-lg bg-accent px-4 py-3"
-                >
-                  <Text className="font-bold text-ink">Play again</Text>
-                </Pressable>
-              )}
               {online && !linkClosed && rematch !== "received" && (
                 <Pressable
                   onPress={offerRematch}
@@ -502,13 +484,6 @@ export function GameScreen({
                 >
                   <Text className="font-bold text-ink">
                     {rematch === "sent" ? "Waiting..." : "Rematch"}
-                  </Text>
-                </Pressable>
-              )}
-              {onLeave && (
-                <Pressable onPress={() => void leave()} className="rounded-lg bg-bar px-4 py-3">
-                  <Text className="font-bold text-ink">
-                    {vsBot ? "Back to bots" : "Back to home"}
                   </Text>
                 </Pressable>
               )}
@@ -523,22 +498,37 @@ export function GameScreen({
           seconds={clock[localColor]}
           active={!isOver && session.turn() === localColor}
         >
-          <Pressable
-            onPress={resign}
-            disabled={isOver}
-            className="mr-2 rounded-lg border border-danger px-3 py-2"
-          >
-            <Text className="font-bold text-danger">Resign</Text>
-          </Pressable>
-          <Pressable
-            onPress={offerDraw}
-            disabled={isOver || drawState === "sent"}
-            className="rounded-lg bg-accent px-3 py-2"
-          >
-            <Text className="font-bold text-ink">
-              {drawState === "sent" ? "Offered" : "Offer draw"}
-            </Text>
-          </Pressable>
+          {isOver ? (
+            vsBot && onRematch ? (
+              <Pressable
+                onPress={() => {
+                  feedback.nav();
+                  onRematch();
+                }}
+                className="rounded-lg bg-accent px-4 py-2"
+              >
+                <Text className="font-bold text-ink">Play again</Text>
+              </Pressable>
+            ) : null
+          ) : (
+            <>
+              <Pressable
+                onPress={resign}
+                className="mr-2 rounded-lg border border-danger px-3 py-2"
+              >
+                <Text className="font-bold text-danger">Resign</Text>
+              </Pressable>
+              <Pressable
+                onPress={offerDraw}
+                disabled={drawState === "sent"}
+                className="rounded-lg bg-accent px-3 py-2"
+              >
+                <Text className="font-bold text-ink">
+                  {drawState === "sent" ? "Offered" : "Offer draw"}
+                </Text>
+              </Pressable>
+            </>
+          )}
         </PlayerCard>
       </View>
 
