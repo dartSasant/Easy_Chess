@@ -8,15 +8,19 @@ import { formatClock } from "./useGameClock";
 
 type Props = {
   name: string;
+  /** Small pill next to the name, for example "Level 3". */
   subtitle?: string;
   captured: PieceType[];
   capturedColor: Color;
   seconds: number;
   active: boolean;
-  /** Extra row under the card, for example the Resign and Offer draw buttons. */
+  /** Replaces the letter circle, for example with a bot portrait. */
+  avatar?: ReactNode;
+  /** Extra row under the bar, for example the Resign and Offer draw buttons. */
   children?: ReactNode;
 };
 
+/** A slim player bar: avatar, name, captured pieces and a clock pill. The side to move glows. */
 export function PlayerCard({
   name,
   subtitle,
@@ -24,6 +28,7 @@ export function PlayerCard({
   capturedColor,
   seconds,
   active,
+  avatar,
   children,
 }: Props) {
   "use no memo";
@@ -31,22 +36,35 @@ export function PlayerCard({
 
   return (
     <View
-      className={`mx-3 my-2 rounded-xl bg-bar px-3 py-2 ${
+      className={`mx-3 my-1.5 rounded-2xl bg-bar px-3 py-2 ${
         active ? "border-2 border-accent" : "border-2 border-transparent"
       }`}
     >
       <View className="flex-row items-center">
-        {/* TODO: replace the letter with the avatar picture. */}
-        <View className="h-11 w-11 items-center justify-center rounded-full bg-accent">
-          <Text className="text-lg font-bold text-ink">{name.charAt(0).toUpperCase()}</Text>
-        </View>
+        {avatar ? (
+          <View className="h-11 w-11 overflow-hidden rounded-full">{avatar}</View>
+        ) : (
+          <View
+            className={`h-11 w-11 items-center justify-center rounded-full bg-accent border-2 ${
+              active ? "border-ink" : "border-transparent"
+            }`}
+          >
+            <Text className="text-lg font-bold text-ink">{name.charAt(0).toUpperCase()}</Text>
+          </View>
+        )}
 
         <View className="ml-3 flex-1">
-          <Text className="text-base font-bold text-ink" numberOfLines={1}>
-            {name}
-            {subtitle ? <Text className="font-normal opacity-60">{`  ${subtitle}`}</Text> : null}
-          </Text>
-          <View className="h-5 flex-row">
+          <View className="flex-row items-center">
+            <Text className="text-base font-bold text-ink" numberOfLines={1} style={{ flexShrink: 1 }}>
+              {name}
+            </Text>
+            {subtitle ? (
+              <View className="ml-2 rounded-full bg-canvas px-2 py-0.5">
+                <Text className="text-xs font-bold text-ink">{subtitle}</Text>
+              </View>
+            ) : null}
+          </View>
+          <View className="h-5 flex-row" style={{ overflow: "hidden" }}>
             {captured.map((type, i) => (
               <View key={i} style={{ marginRight: -6 }}>
                 <PieceView piece={{ color: capturedColor, type }} size={20} styleId={pieceStyle} />
@@ -55,7 +73,11 @@ export function PlayerCard({
           </View>
         </View>
 
-        <Text className="text-base font-bold text-ink">{formatClock(seconds)}</Text>
+        <View className={`rounded-full px-3 py-1.5 ${active ? "bg-accent" : "bg-canvas"}`}>
+          <Text className="text-base font-bold text-ink" style={{ fontVariant: ["tabular-nums"] }}>
+            {formatClock(seconds)}
+          </Text>
+        </View>
       </View>
 
       {children ? <View className="mt-2 flex-row justify-end">{children}</View> : null}

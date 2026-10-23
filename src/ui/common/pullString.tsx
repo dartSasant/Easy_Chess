@@ -2,27 +2,57 @@ import { useEffect, useRef, useState } from "react";
 import { Animated, PanResponder, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { feedback } from "@/core/feedback";
+import { feedback, haptics } from "@/core/feedback";
 
-const REST = 34; // string length when idle
+const REST = 34; // default string length when idle
 const KNOB = 22; // knob size
 const MAX_PULL = 120; // the string stretches at most this far
 const TRIGGER = 70; // pull past this and letting go goes back
 const LEFT = 20;
 
-type Props = { onPull: () => void };
+type Props = {
+  onPull: () => void;
+  /** Drop in from above with a bounce when it first appears, then give a small hint tug. */
+  entrance?: boolean;
+  /** String length when idle. Shorter strings fit into a small space. */
+  rest?: number;
+};
 
 /** A string with a knob hanging from the top-left. Pull it down to go back. */
-export function PullString({ onPull }: Props) {
+export function PullString({ onPull, entrance = false, rest = REST }: Props) {
   "use no memo";
   const insets = useSafeAreaInsets();
   const [pull] = useState(() => new Animated.Value(0));
+  const [enter] = useState(() => new Animated.Value(entrance ? 0 : 1)); // 0 above the screen, 1 hanging
   const onPullRef = useRef(onPull);
   const crossed = useRef(false);
 
   useEffect(() => {
     onPullRef.current = onPull;
   });
+
+  // Entrance: drop in, bounce, then a small tug so people see it can be pulled.
+  useEffect(() => {
+    if (!entrance) return;
+    let tug: Animated.CompositeAnimation | null = null;
+    const drop = Animated.sequence([
+      Animated.delay(250),
+      Animated.spring(enter, { toValue: 1, friction: 5, tension: 90, useNativeDriver: true }),
+    ]);
+    drop.start(({ finished }) => {
+      if (!finished) return;
+      haptics.tap();
+      tug = Animated.sequence([
+        Animated.timing(pull, { toValue: 16, duration: 180, useNativeDriver: false }),
+        Animated.spring(pull, { toValue: 0, friction: 4, tension: 140, useNativeDriver: false }),
+      ]);
+      tug.start();
+    });
+    return () => {
+      drop.stop();
+      tug?.stop();
+    };
+  }, [entrance, enter, pull]);
 
   const springBack = () =>
     Animated.spring(pull, {
@@ -66,12 +96,22 @@ export function PullString({ onPull }: Props) {
 
   const height = pull.interpolate({
     inputRange: [0, MAX_PULL],
-    outputRange: [REST, REST + MAX_PULL],
+    outputRange: [rest, rest + MAX_PULL],
+    extrapolate: "clamp",
+  });
+
+  const dropY = enter.interpolate({
+    inputRange: [0, 1],
+    outputRange: [-(rest + KNOB + insets.top + 24), 0],
+  });
+  const fadeIn = enter.interpolate({
+    inputRange: [0, 0.2, 1],
+    outputRange: [0, 1, 1],
     extrapolate: "clamp",
   });
 
   return (
-    <View
+    <Animated.View
       {...pan.panHandlers}
       accessible
       accessibilityRole="button"
@@ -84,15 +124,14 @@ export function PullString({ onPull }: Props) {
         left: LEFT,
         width: 44, // wider than the string so it is easy to grab
         alignItems: "center",
+        opacity: fadeIn,
+        transform: [{ translateY: dropY }],
       }}
     >
       <Animated.View style={{ width: 2, height }}>
         <View className="flex-1 bg-ink" />
       </Animated.View>
-      <View
-        className="rounded-full bg-accent"
-        style={{ width: KNOB, height: KNOB }}
-      />
-    </View>
+      <View className="rounded-full bg-accent" style={{ width: KNOB, height: KNOB }} />
+    </Animated.View>
   );
 }

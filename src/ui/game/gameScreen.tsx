@@ -22,11 +22,10 @@ import {
 import type { BleTransport } from "@/core/transport";
 import { Board } from "@/ui/board/board";
 import { PieceView } from "@/ui/board/pieceView";
-import { BotBubble } from "@/ui/game/botBubble";
+import { PullString } from "@/ui/common/pullString";
 import { GamePopup } from "@/ui/game/gamePopups";
 import { MoveList } from "@/ui/game/moveList";
 import { PlayerCard } from "@/ui/game/playerCard";
-import { useBotChatter } from "@/ui/game/useBotChatter";
 import { useGameClock } from "@/ui/game/useGameClock";
 import { Confetti, Trophy } from "@/ui/game/winCelebration";
 import { pickMascotLine } from "@/ui/mascot/mascotLines";
@@ -38,6 +37,9 @@ const RANKS = ["1", "2", "3", "4", "5", "6", "7", "8"];
 const START_COUNTS = { p: 8, n: 2, b: 2, r: 2, q: 1 };
 const CAPTURE_ORDER = ["q", "r", "b", "n", "p"] as const;
 const PROMOTION_CHOICES: PromotionPiece[] = ["q", "r", "b", "n"];
+// Empty strip at the top where the back string hangs, so it never covers the opponent bar.
+const STRING_STRIP = 44;
+const STRING_REST = 18; // string length + knob (22) fits into the strip
 
 const DRAW_TEXT = {
   stalemate: "stalemate",
@@ -158,15 +160,6 @@ export function GameScreen({
       : status.kind === "draw"
         ? "draw"
         : endedResult;
-
-  // Bot speech bubbles and reactions (campaign games only).
-  const chat = useBotChatter({
-    level: bot?.level ?? 1,
-    enabled: vsBot,
-    moves: session.history(),
-    localColor,
-    outcome,
-  });
 
   /** Ends the game by resignation, agreement or disconnect. The first ending wins. */
   const finish = (text: string, result: Result | null) => {
@@ -423,8 +416,10 @@ export function GameScreen({
   const headline = ended ?? (thinking ? `${oppLabel} is thinking...` : statusText(session));
 
   return (
+    <View className="flex-1 bg-canvas">
     <SafeAreaView className="flex-1 bg-canvas">
       <View className="flex-1 justify-center">
+        {onLeave ? <View style={{ height: STRING_STRIP }} /> : null}
         <PlayerCard
           name={oppName}
           subtitle={bot ? `Level ${bot.level}` : undefined}
@@ -433,13 +428,6 @@ export function GameScreen({
           seconds={clock[opponentColor]}
           active={!isOver && session.turn() === opponentColor}
         />
-
-        {/* Fixed-height slot, so the layout does not jump when the bubble appears. */}
-        {vsBot && bot ? (
-          <View style={{ height: 48, justifyContent: "center" }}>
-            {chat ? <BotBubble level={bot.level} chat={chat} /> : null}
-          </View>
-        ) : null}
 
         <View className="items-center">
           <Board
@@ -633,5 +621,11 @@ export function GameScreen({
       {/* Confetti falls over everything after a win against a bot */}
       {vsBot && outcome === "win" ? <Confetti /> : null}
     </SafeAreaView>
+
+      {/* After the game ends (resign, checkmate, draw...) the back string drops in. */}
+      {isOver && onLeave ? (
+        <PullString entrance rest={STRING_REST} onPull={() => void leave()} />
+      ) : null}
+    </View>
   );
 }

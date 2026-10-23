@@ -18,17 +18,19 @@ function loadAccelerometer(): AccelerometerModule | null {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     return (require("expo-sensors") as { Accelerometer: AccelerometerModule }).Accelerometer;
   } catch {
+    if (__DEV__) console.warn("[shake] expo-sensors is not in this build. Rebuild the dev client.");
     return null;
   }
 }
 
-// Tuning. Gravity alone reads about 1 g. A real shake easily goes past 2 g.
-const THRESHOLD_G = 2.2; // how hard a jolt has to be
-const MIN_GAP_MS = 140; // two readings closer than this count as the same jolt
-const WINDOW_MS = 1000; // the jolts must happen within this time
+// Tuning. Gravity alone reads about 1 g. We look at how far a reading is from 1 g in EITHER
+// direction, because a real shake pushes the reading above and below 1 g.
+const THRESHOLD_G = 0.8; // how far from 1 g a reading must be to count as a jolt
+const MIN_GAP_MS = 100; // two readings closer than this count as the same jolt
+const WINDOW_MS = 1200; // the jolts must happen within this time
 const JOLTS_NEEDED = 3; // a single bump or a dropped phone is not a shake
 const COOLDOWN_MS = 2500; // after a shake, ignore new ones for a bit
-const UPDATE_MS = 60;
+const UPDATE_MS = 50;
 
 /** Calls `onShake` when the phone is shaken. Only listens while `enabled` and the app is open. */
 export function useShake(enabled: boolean, onShake: () => void) {
@@ -51,7 +53,10 @@ export function useShake(enabled: boolean, onShake: () => void) {
     const start = async () => {
       if (sub || cancelled) return;
       try {
-        if (!(await accel.isAvailableAsync())) return;
+        if (!(await accel.isAvailableAsync())) {
+          if (__DEV__) console.warn("[shake] no accelerometer on this device");
+          return;
+        }
       } catch {
         return;
       }
@@ -60,7 +65,7 @@ export function useShake(enabled: boolean, onShake: () => void) {
         accel.setUpdateInterval(UPDATE_MS);
         sub = accel.addListener(({ x, y, z }) => {
           const g = Math.sqrt(x * x + y * y + z * z);
-          if (g < THRESHOLD_G) return;
+          if (Math.abs(g - 1) < THRESHOLD_G) return;
 
           const now = Date.now();
           if (now - lastFiredAt < COOLDOWN_MS) return;
@@ -69,12 +74,15 @@ export function useShake(enabled: boolean, onShake: () => void) {
 
           jolts += 1;
           lastJoltAt = now;
+          if (__DEV__) console.log(`[shake] jolt ${jolts}/${JOLTS_NEEDED} (${g.toFixed(2)} g)`);
           if (jolts >= JOLTS_NEEDED) {
             jolts = 0;
             lastFiredAt = now;
+            if (__DEV__) console.log("[shake] fired");
             handler.current();
           }
         });
+        if (__DEV__) console.log("[shake] listening");
       } catch {
         sub = null;
       }
