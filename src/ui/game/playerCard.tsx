@@ -16,6 +16,8 @@ type Props = {
   active: boolean;
   /** Replaces the letter circle, for example with a bot portrait. */
   avatar?: ReactNode;
+  /** Fills the space between the name and the clock, for example the move list. */
+  moves?: ReactNode;
   /** Extra row under the bar, for example the Resign and Offer draw buttons. */
   children?: ReactNode;
 };
@@ -29,6 +31,7 @@ export function PlayerCard({
   seconds,
   active,
   avatar,
+  moves,
   children,
 }: Props) {
   "use no memo";
@@ -53,7 +56,7 @@ export function PlayerCard({
           </View>
         )}
 
-        <View className="ml-3 flex-1">
+        <View className="ml-3" style={{ flexShrink: 1, maxWidth: moves ? "50%" : undefined }}>
           <View className="flex-row items-center">
             <Text className="text-base font-bold text-ink" numberOfLines={1} style={{ flexShrink: 1 }}>
               {name}
@@ -72,6 +75,9 @@ export function PlayerCard({
             ))}
           </View>
         </View>
+
+        {/* Takes the free space between the name and the clock. Holds the move list when given. */}
+        <View style={{ flex: 1, marginLeft: 4, marginRight: 8 }}>{moves}</View>
 
         <View className={`rounded-full px-3 py-1.5 ${active ? "bg-accent" : "bg-canvas"}`}>
           <Text className="text-base font-bold text-ink" style={{ fontVariant: ["tabular-nums"] }}>

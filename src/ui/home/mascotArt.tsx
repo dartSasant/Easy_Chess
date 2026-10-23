@@ -1,3 +1,4 @@
+import { SpookyGhost } from "@/ui/home/bossArt";
 import Svg, { Circle, Ellipse, Line, Path, Rect } from "react-native-svg";
 
 import type { ThemeColors } from "@/ui/theme/themes";
@@ -381,69 +382,7 @@ export function JungleMonkey({ c }: P) {
   );
 }
 
+/** The Spooky Night mascot is the ghost. */
 export function HalloweenCat({ c }: P) {
-  const body = "#1A1226";
-  return (
-    <Svg width={110} height={110} viewBox="0 0 120 120">
-      <Path
-        d="M24 56L28 26L52 44Z"
-        fill={body}
-        stroke={c.ink}
-        strokeWidth={3.5}
-        strokeLinejoin="round"
-      />
-      <Path
-        d="M96 56L92 26L68 44Z"
-        fill={body}
-        stroke={c.ink}
-        strokeWidth={3.5}
-        strokeLinejoin="round"
-      />
-      <Ellipse
-        cx={60}
-        cy={74}
-        rx={38}
-        ry={32}
-        fill={body}
-        stroke={c.ink}
-        strokeWidth={4}
-      />
-      <Circle cx={45} cy={70} r={10} fill="#F29A1F" />
-      <Circle cx={75} cy={70} r={10} fill="#F29A1F" />
-      <Ellipse cx={45} cy={70} rx={2.5} ry={7} fill={body} />
-      <Ellipse cx={75} cy={70} rx={2.5} ry={7} fill={body} />
-      <Path d="M56 82L64 82L60 87Z" fill="#FF8FB8" />
-      <Path
-        d="M60 87Q54 94 48 90M60 87Q66 94 72 90"
-        stroke={c.ink}
-        strokeWidth={2.5}
-        strokeLinecap="round"
-        fill="none"
-      />
-      <Path
-        d="M30 84L14 82M30 90L14 94M90 84L106 82M90 90L106 94"
-        stroke={c.ink}
-        strokeWidth={2}
-        strokeLinecap="round"
-        opacity={0.8}
-      />
-      <Path
-        d="M34 42L64 4L88 42Z"
-        fill={c.squareDark}
-        stroke={c.ink}
-        strokeWidth={3.5}
-        strokeLinejoin="round"
-      />
-      <Rect
-        x={30}
-        y={38}
-        width={62}
-        height={9}
-        rx={4.5}
-        fill={c.accent}
-        stroke={c.ink}
-        strokeWidth={3}
-      />
-    </Svg>
-  );
+  return <SpookyGhost c={c} />;
 }

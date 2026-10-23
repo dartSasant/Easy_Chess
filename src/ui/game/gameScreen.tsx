@@ -156,7 +156,7 @@ export function GameScreen({
   const vsBot = !!bot && !testMode;
   const opponentColor: Color = localColor === "w" ? "b" : "w";
   const oppName = bot ? bot.name : opponentName;
-  const oppLabel = bot ? `${bot.name} · Level ${bot.level}` : opponentName;
+  const oppLabel = bot ? `${bot.name} · ${bot.level > 100 ? "Boss" : `Level ${bot.level}`}` : opponentName;
   const status = session.status();
   const isOver = status.kind !== "playing" || ended !== null;
   const thinking = vsBot && !isOver && !session.isMyTurn();
@@ -439,7 +439,7 @@ export function GameScreen({
           {onLeave ? <View style={{ height: STRING_STRIP }} /> : null}
           <PlayerCard
             name={oppName}
-            subtitle={bot ? `Level ${bot.level}` : undefined}
+            subtitle={bot ? (bot.level > 100 ? "Boss" : `Level ${bot.level}`) : undefined}
             captured={capturedBy(session, opponentColor)}
             capturedColor={localColor}
             seconds={clock[opponentColor]}

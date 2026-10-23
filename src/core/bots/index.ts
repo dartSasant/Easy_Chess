@@ -2,6 +2,7 @@ import { Chess } from "chess.js";
 
 import type { Color } from "@/core/game";
 import { evaluate } from "./evaluate";
+import { BOSSES, BOSS_COUNT, getBossProfile } from "./bosses";
 import { BOSS_LEVEL, BOT_COUNT, BOT_PROFILES } from "./levels";
 import { searchBestMove } from "./search";
 import type { Bot, BotProfile } from "./types";
@@ -16,8 +17,7 @@ export function getBotProfile(level: number): BotProfile {
   return BOT_PROFILES[clamped - 1];
 }
 
-export function getBot(level: number): Bot {
-  const profile = getBotProfile(level);
+function makeBot(profile: BotProfile): Bot {
   return {
     level: profile.level,
     name: profile.name,
@@ -37,5 +37,13 @@ export function getBot(level: number): Bot {
   };
 }
 
-export { BOSS_LEVEL, BOT_COUNT, BOT_PROFILES };
+export function getBot(level: number): Bot {
+  return makeBot(getBotProfile(level));
+}
+
+export function getBossBot(index: number): Bot {
+  return makeBot(getBossProfile(index));
+}
+
+export { BOSSES, BOSS_COUNT, BOSS_LEVEL, BOT_COUNT, BOT_PROFILES };
 export type { Bot, BotProfile };

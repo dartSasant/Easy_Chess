@@ -30,24 +30,44 @@ function ensureAmbience() {
   const s = getSettings();
   if (!ambienceWanted || !s.soundEnabled || !appActive) return;
   try {
-    if (!ambience || ambienceTheme !== s.themeId) {
-      const old = ambience;
-      const next = createAudioPlayer(AMBIENCE_SOURCES[s.themeId]);
-      next.loop = true;
-      ambience = next;
+    const src = AMBIENCE_SOURCES[s.themeId];
+    if (!ambience) {
+      ambience = createAudioPlayer(src);
+      ambience.loop = true;
       ambienceTheme = s.themeId;
-      if (old) {
+    } else if (ambienceTheme !== s.themeId) {
+      try {
+        ambience.replace(src);
+        ambience.loop = true;
+      } catch (e) {
+        console.warn("[audio] replace failed, recreating", e);
         try {
-          old.pause();
-          old.remove();
+          ambience.pause();
+          ambience.remove();
         } catch {}
+        ambience = createAudioPlayer(src);
+        ambience.loop = true;
       }
+      ambienceTheme = s.themeId;
     }
-    if (ambience) {
-      ambience.volume = s.ambienceVolume;
-      ambience.play();
-    }
-  } catch {}
+    const pl = ambience;
+    pl.volume = s.ambienceVolume;
+    pl.play();
+    console.log("[audio] play", s.themeId);
+    setTimeout(() => {
+      try {
+        const live = ambience === pl && ambienceWanted && getSettings().soundEnabled && appActive;
+        if (live && !pl.playing) {
+          console.log("[audio] retry", s.themeId);
+          pl.play();
+        }
+      } catch (e) {
+        console.warn("[audio] retry error", e);
+      }
+    }, 600);
+  } catch (e) {
+    console.warn("[audio] error", e);
+  }
 }
 
 function pauseAmbience() {

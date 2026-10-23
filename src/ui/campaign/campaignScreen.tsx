@@ -1,9 +1,10 @@
 import { Pressable, ScrollView, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import { BOSS_LEVEL, BOT_PROFILES } from "@/core/bots";
+import { BOSSES, BOSS_LEVEL, BOT_PROFILES } from "@/core/bots";
 import { feedback } from "@/core/feedback";
-import { adsRemoved, isUnlocked } from "@/core/storage";
+import { adsRemoved, isBossUnlocked, isUnlocked } from "@/core/storage";
+import { BossPortrait } from "@/ui/campaign/bossPortrait";
 import { BotPortrait } from "@/ui/campaign/botPortrait";
 import { PullString } from "@/ui/common/pullString";
 
@@ -12,11 +13,13 @@ const COLUMNS = 5;
 
 type Props = {
   beaten: number[];
+  bossBeaten: number[];
   onPlay: (level: number) => void;
+  onPlayBoss: (index: number) => void;
   onBack: () => void;
 };
 
-export function CampaignScreen({ beaten, onPlay, onBack }: Props) {
+export function CampaignScreen({ beaten, bossBeaten, onPlay, onPlayBoss, onBack }: Props) {
   "use no memo";
   const boss = BOT_PROFILES[BOSS_LEVEL - 1];
   const total = BOT_PROFILES.length;
@@ -129,6 +132,55 @@ export function CampaignScreen({ beaten, onPlay, onBack }: Props) {
                   ) : (
                     <View className="h-1" />
                   )}
+                </Pressable>
+              </View>
+            );
+          })}
+        </View>
+
+        <Text className="mt-8 text-2xl font-extrabold text-ink">Boss mascots</Text>
+        <Text className="mt-1 text-sm text-ink/70">
+          Beat each mascot to unlock the next one.
+        </Text>
+
+        <View className="mt-3 flex-row flex-wrap">
+          {BOSSES.map((b) => {
+            const unlocked = isBossUnlocked(b.index, bossBeaten);
+            const done = bossBeaten.includes(b.index);
+            return (
+              <View key={b.index} style={{ width: "33.333%" }} className="p-1">
+                <Pressable
+                  disabled={!unlocked}
+                  onPress={() => {
+                    feedback.tap();
+                    onPlayBoss(b.index);
+                  }}
+                  className={`items-center rounded-2xl border-2 bg-bar p-1 ${
+                    done ? "border-accent" : "border-danger"
+                  } ${unlocked ? "" : "opacity-40"}`}
+                  style={{
+                    shadowColor: "#000",
+                    shadowOpacity: unlocked ? 0.12 : 0,
+                    shadowRadius: 4,
+                    shadowOffset: { width: 0, height: 2 },
+                    elevation: unlocked ? 2 : 0,
+                  }}
+                >
+                  <View className="aspect-square w-full items-center justify-center overflow-hidden rounded-xl bg-accent/20">
+                    <BossPortrait index={b.index} animate={unlocked} />
+                    {!unlocked && <Text className="absolute text-2xl">🔒</Text>}
+                    {done && (
+                      <View className="absolute bottom-1 right-1 rounded-full bg-accent px-1.5 py-0.5">
+                        <Text className="text-[10px] font-extrabold text-ink">✓</Text>
+                      </View>
+                    )}
+                  </View>
+                  <Text numberOfLines={1} className="mt-1 text-xs font-bold text-ink">
+                    {b.name}
+                  </Text>
+                  <View className="mb-0.5 mt-0.5 rounded-full bg-danger px-1.5">
+                    <Text className="text-[9px] font-extrabold text-bar">BOSS</Text>
+                  </View>
                 </Pressable>
               </View>
             );
