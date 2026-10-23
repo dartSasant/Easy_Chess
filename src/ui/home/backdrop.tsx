@@ -13,7 +13,7 @@ import Svg, {
 } from "react-native-svg";
 
 import type { ThemeId } from "@/core/storage/settings";
-import { mix } from "@/ui/theme/colorMIx";
+import { mix } from "@/ui/theme/colorMix";
 import type { ThemeColors } from "@/ui/theme/themes";
 import { useTheme } from "@/ui/theme/useTheme";
 

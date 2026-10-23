@@ -1,0 +1,897 @@
+===== FILE: src/core/transport/bleTransport.ts =====
+import {
+  BleManager,
+  type Advertisement,
+  type GattServer,
+  type Peripheral,
+  type ScanResult,
+  type ScanSession,
+} from "expo-ble-kit";
+
+import type { Color } from "@/core/game";
+import {
+  PROTOCOL_VERSION,
+  decode,
+  encode,
+  pickColor,
+  randomRoll,
+  type GameMsg,
+  type Msg,
+} from "@/core/protocol";
+import { getStablePeerId } from "@/core/storage/peerId";
+
+const SERVICE = "6e8f0001-5a1c-4c3e-9b57-0e5c3a1d7a01";
+const RX = "6e8f0002-5a1c-4c3e-9b57-0e5c3a1d7a01"; // the other phone writes here
+const TX = "6e8f0003-5a1c-4c3e-9b57-0e5c3a1d7a01"; // we notify here
+
+const PING_EVERY_MS = 4000;
+const DEAD_AFTER_MS = 12000;
+/** How long an incoming challenge waits for Accept before it expires. */
+const CHALLENGE_TTL_MS = 20000;
+/** How long the challenger waits for an answer. Longer than the TTL on purpose. */
+const ANSWER_TIMEOUT_MS = 25000;
+
+export type TransportEvent =
+  | { kind: "log"; text: string }
+  | { kind: "found"; devices: ScanResult[] }
+  | { kind: "challenge"; peerId: string; name: string }
+  | { kind: "challengeExpired" }
+  | { kind: "noAnswer" }
+  | { kind: "ready"; localColor: Color; opponentName: string }
+  | { kind: "closed"; reason: string };
+
+type Phase = "idle" | "handshake" | "ready";
+type Hello = Extract<Msg, { t: "hello" }>;
+
+export class BleTransport {
+  readonly peerId = getStablePeerId();
+
+  private phase: Phase = "idle";
+  private myRoll = randomRoll();
+  private opponent: { peerId: string; name: string; roll: number } | null = null;
+
+  /** True once we challenged someone or accepted a challenge. Before that we stay quiet. */
+  private accepted = false;
+  private challenger: Hello | null = null;
+  private challengeTimer: ReturnType<typeof setTimeout> | null = null;
+  private answerTimer: ReturnType<typeof setTimeout> | null = null;
+
+  private server: GattServer | null = null;
+  private advertisement: Advertisement | null = null;
+  private scanSession: ScanSession | null = null;
+  private outbound: Peripheral | null = null; // a phone we connected to
+  private subscribers = new Set<string>(); // phones subscribed to our TX
+  private found = new Map<string, ScanResult>();
+
+  private listeners = new Set<(e: TransportEvent) => void>();
+  private msgHandler: ((m: GameMsg) => void) | null = null;
+  private pending: GameMsg[] = [];
+
+  private lastSeen = 0;
+  private heartbeat: ReturnType<typeof setInterval> | null = null;
+
+  constructor(private readonly playerName: string) {}
+
+  // ---- events ----
+
+  onEvent(listener: (e: TransportEvent) => void): () => void {
+    this.listeners.add(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
+  }
+
+  /** Game messages. Anything that arrived before the first subscriber is replayed. */
+  onMessage(handler: (m: GameMsg) => void): () => void {
+    this.msgHandler = handler;
+    this.pending.splice(0).forEach(handler);
+    return () => {
+      if (this.msgHandler === handler) this.msgHandler = null;
+    };
+  }
+
+  private emit(e: TransportEvent) {
+    this.listeners.forEach((l) => l(e));
+  }
+  private log(text: string) {
+    this.emit({ kind: "log", text });
+  }
+
+  // ---- lifecycle ----
+
+  async start(): Promise<void> {
+    if (this.phase !== "idle") return;
+    this.phase = "handshake";
+    try {
+      const perms = await BleManager.requestPermissionsAsync({
+        scan: true,
+        connect: true,
+        advertise: true,
+      });
+      this.log(
+        `permissions: scan ${perms.scan}, connect ${perms.connect}, advertise ${perms.advertise}`,
+      );
+
+      const srv = await BleManager.openGattServer([
+        {
+          uuid: SERVICE,
+          characteristics: [
+            { uuid: RX, properties: ["write"], permissions: ["writeable"] },
+            { uuid: TX, properties: ["notify"], permissions: [] },
+          ],
+        },
+      ]);
+      srv.onWriteRequest((request) => {
+        if (request.characteristic === RX) this.handleIncoming(request.value);
+      });
+      srv.addSubscriptionListener((event) => {
+        if (event.subscribed) {
+          this.subscribers.add(event.centralId);
+          // Until we accept a challenge we say nothing, so the challenger cannot start a game alone.
+          if (this.accepted) void this.sendHello();
+        } else {
+          this.subscribers.delete(event.centralId);
+        }
+        this.log(`${event.centralId} ${event.subscribed ? "subscribed to" : "left"} our TX`);
+      });
+      this.server = srv;
+
+      this.advertisement = await BleManager.startAdvertising({
+        serviceUUIDs: [SERVICE],
+        localName: "EasyChess",
+      });
+
+      this.scanSession = BleManager.startScan(
+        { services: [SERVICE] },
+        (results) => {
+          results.forEach((r) => this.found.set(r.id, r)); // same id = same entry
+          this.emit({ kind: "found", devices: [...this.found.values()] });
+        },
+        (error) => this.log(`scan error: ${String(error)}`),
+      );
+      this.log("advertising and scanning");
+    } catch (error) {
+      this.log(`start failed: ${String(error)}`);
+      await this.teardown();
+      throw error;
+    }
+  }
+
+  /** Challenges the phone with this id. Returns false if the link could not be made. */
+  async connect(id: string): Promise<boolean> {
+    if (this.phase !== "handshake") return false;
+    try {
+      const peripheral = BleManager.getPeripheral(id);
+      this.log(`connecting to ${id}`);
+      await peripheral.connect();
+      this.log(`connected, MTU ${peripheral.mtu}`);
+      peripheral.addConnectionStateListener((state) => this.log(`link state: ${state}`));
+      await peripheral.subscribe(SERVICE, TX, (value) => this.handleIncoming(value));
+      this.outbound = peripheral;
+      this.log("subscribed to their TX");
+
+      this.accepted = true; // we started this challenge
+      this.acceptPending(); // if they challenged us at the same moment, that counts as yes
+      await this.sendHello();
+      this.startAnswerTimer();
+      return true;
+    } catch (error) {
+      this.log(`connect failed: ${String(error)}`);
+      if (!this.outbound) this.accepted = false;
+      return false;
+    }
+  }
+
+  /** Accept the challenge that was announced with a "challenge" event. */
+  accept(): void {
+    if (this.phase !== "handshake") return;
+    this.clearChallengeTimer();
+    this.accepted = true;
+    this.acceptPending();
+  }
+
+  /** Decline the pending challenge. The challenger simply gets no answer. */
+  decline(): void {
+    this.clearChallengeTimer();
+    this.challenger = null;
+    this.accepted = false;
+  }
+
+  async stop(): Promise<void> {
+    await this.teardown();
+  }
+
+  private close(reason: string) {
+    if (this.phase === "idle") return;
+    this.emit({ kind: "closed", reason });
+    void this.teardown();
+  }
+
+  private async teardown() {
+    this.phase = "idle";
+    if (this.heartbeat) clearInterval(this.heartbeat);
+    this.heartbeat = null;
+    this.clearChallengeTimer();
+    this.clearAnswerTimer();
+    this.accepted = false;
+    this.challenger = null;
+
+    const steps: (() => unknown)[] = [
+      () => this.scanSession?.stop(),
+      () => this.advertisement?.stop(),
+      () => this.outbound?.disconnect(),
+      () => this.server?.close(),
+    ];
+    for (const step of steps) {
+      try {
+        await step();
+      } catch (error) {
+        this.log(`stop error: ${String(error)}`);
+      }
+    }
+    this.scanSession = null;
+    this.advertisement = null;
+    this.outbound = null;
+    this.server = null;
+    this.subscribers.clear();
+    this.found.clear();
+    this.opponent = null;
+    this.myRoll = randomRoll();
+    this.pending = [];
+  }
+
+  // ---- timers ----
+
+  private clearChallengeTimer() {
+    if (this.challengeTimer) clearTimeout(this.challengeTimer);
+    this.challengeTimer = null;
+  }
+
+  private clearAnswerTimer() {
+    if (this.answerTimer) clearTimeout(this.answerTimer);
+    this.answerTimer = null;
+  }
+
+  /** The challenger gives up after a while and frees the link so it can try again. */
+  private startAnswerTimer() {
+    this.clearAnswerTimer();
+    this.answerTimer = setTimeout(() => {
+      this.answerTimer = null;
+      if (this.phase !== "handshake") return;
+      this.log("no answer, giving up");
+      const link = this.outbound;
+      this.outbound = null;
+      this.accepted = false;
+      this.opponent = null;
+      try {
+        void link?.disconnect();
+      } catch {
+        // already gone
+      }
+      this.emit({ kind: "noAnswer" });
+    }, ANSWER_TIMEOUT_MS);
+  }
+
+  // ---- sending ----
+
+  /** Sends on one link only: our outbound link if we have one, else notify. */
+  async send(msg: Msg): Promise<boolean> {
+    const data = encode(msg);
+    if (this.outbound) {
+      try {
+        await this.outbound.write(SERVICE, RX, data);
+        return true;
+      } catch (error) {
+        this.log(`write failed: ${String(error)}`);
+        return false;
+      }
+    }
+    if (this.server && this.subscribers.size > 0) {
+      try {
+        await this.server.notify(TX, data);
+        return true;
+      } catch (error) {
+        this.log(`notify failed: ${String(error)}`);
+        return false;
+      }
+    }
+    return false;
+  }
+
+  private sendHello() {
+    return this.send({
+      t: "hello",
+      v: PROTOCOL_VERSION,
+      peerId: this.peerId,
+      name: this.playerName,
+      roll: this.myRoll,
+    });
+  }
+
+  // ---- receiving ----
+
+  private handleIncoming(bytes: Uint8Array) {
+    const msg = decode(bytes);
+    if (!msg) {
+      this.log("ignored a malformed message");
+      return;
+    }
+    this.lastSeen = Date.now();
+
+    switch (msg.t) {
+      case "hello":
+        this.onHello(msg);
+        return;
+      case "ping":
+        void this.send({ t: "pong" });
+        return;
+      case "pong":
+        return;
+      default:
+        if (this.phase !== "ready") return; // game messages before the handshake are dropped
+        if (this.msgHandler) this.msgHandler(msg);
+        else this.pending.push(msg);
+    }
+  }
+
+  /** Runs a challenge that was waiting for our answer. */
+  private acceptPending() {
+    const c = this.challenger;
+    this.challenger = null;
+    if (c) this.onHello(c);
+  }
+
+  private onHello(msg: Hello) {
+    if (this.phase !== "handshake") return; // repeats over a second link land here
+    if (msg.peerId === this.peerId) return;
+    if (msg.v !== PROTOCOL_VERSION) {
+      this.close("The other phone runs a different version of the app");
+      return;
+    }
+
+    // Someone is challenging us. Tell the screen and wait for Accept or Decline.
+    if (!this.accepted) {
+      if (this.challenger?.peerId === msg.peerId) return; // already announced
+      this.challenger = msg;
+      this.clearChallengeTimer();
+      this.challengeTimer = setTimeout(() => {
+        this.challengeTimer = null;
+        if (this.challenger) {
+          this.challenger = null;
+          this.emit({ kind: "challengeExpired" });
+        }
+      }, CHALLENGE_TTL_MS);
+      this.emit({ kind: "challenge", peerId: msg.peerId, name: msg.name });
+      return;
+    }
+
+    const first = this.opponent === null;
+    this.opponent = { peerId: msg.peerId, name: msg.name, roll: msg.roll };
+    if (first) void this.sendHello(); // answer once, so nobody ping-pongs hellos
+
+    const color = pickColor(this.myRoll, msg.roll);
+    if (color === null) {
+      this.myRoll = randomRoll(); // tie: roll again and wait for their new roll
+      void this.sendHello();
+      return;
+    }
+
+    this.phase = "ready";
+    this.clearAnswerTimer();
+    this.lastSeen = Date.now();
+    this.heartbeat = setInterval(() => {
+      if (Date.now() - this.lastSeen > DEAD_AFTER_MS) {
+        this.close("Opponent disconnected");
+        return;
+      }
+      void this.send({ t: "ping" });
+    }, PING_EVERY_MS);
+    this.emit({ kind: "ready", localColor: color, opponentName: msg.name });
+  }
+}
+===== FILE: src/core/transport/index.ts =====
+export { BleTransport } from "./bleTransport";
+export type { TransportEvent } from "./bleTransport";
+===== FILE: src/core/protocol/handshake.ts =====
+import type { Color } from "@/core/game";
+
+export function makePeerId(): string {
+  let id = "";
+  for (let i = 0; i < 4; i++) {
+    id += Math.floor(Math.random() * 0x10000).toString(16).padStart(4, "0");
+  }
+  return id;
+}
+
+export function randomRoll(): number {
+  return Math.floor(Math.random() * 0x7fffffff);
+}
+
+/** Higher roll plays White. Returns null on a tie, so both phones must roll again. */
+export function pickColor(myRoll: number, opponentRoll: number): Color | null {
+  if (myRoll === opponentRoll) return null;
+  return myRoll > opponentRoll ? "w" : "b";
+}
+===== FILE: src/core/protocol/messages.ts =====
+import type { PromotionPiece, Square } from "@/core/game";
+
+export const PROTOCOL_VERSION = 1;
+
+export type HelloMsg = {
+  t: "hello";
+  v: number;
+  peerId: string;
+  name: string;
+  roll: number;
+};
+export type MoveMsg = {
+  t: "move";
+  from: Square;
+  to: Square;
+  promotion?: PromotionPiece;
+  /** Ply number of this move (1 = White's first move). */
+  ply: number;
+};
+export type ResignMsg = { t: "resign" };
+export type DrawOfferMsg = { t: "drawOffer" };
+export type DrawAcceptMsg = { t: "drawAccept" };
+export type DrawDeclineMsg = { t: "drawDecline" };
+export type RematchOfferMsg = { t: "rematchOffer" };
+export type RematchAcceptMsg = { t: "rematchAccept" };
+export type RematchDeclineMsg = { t: "rematchDecline" };
+/** Sent when a player goes back to the home screen. */
+export type LeaveMsg = { t: "leave" };
+export type PingMsg = { t: "ping" };
+export type PongMsg = { t: "pong" };
+
+export type Msg =
+  | HelloMsg
+  | MoveMsg
+  | ResignMsg
+  | DrawOfferMsg
+  | DrawAcceptMsg
+  | DrawDeclineMsg
+  | RematchOfferMsg
+  | RematchAcceptMsg
+  | RematchDeclineMsg
+  | LeaveMsg
+  | PingMsg
+  | PongMsg;
+
+/** Messages the game screen cares about (handshake and heartbeat stay inside the transport). */
+export type GameMsg = Exclude<Msg, { t: "hello" | "ping" | "pong" }>;
+===== FILE: src/core/protocol/codec.ts =====
+import type { Msg } from "./messages";
+
+const encoder = new TextEncoder();
+const decoder = new TextDecoder();
+
+const SQUARE = /^[a-h][1-8]$/;
+const PROMOTIONS = ["q", "r", "b", "n"];
+
+export function encode(msg: Msg): Uint8Array {
+  return encoder.encode(JSON.stringify(msg));
+}
+
+/** Returns null for anything malformed. Never throws. */
+export function decode(bytes: Uint8Array): Msg | null {
+  try {
+    const raw: unknown = JSON.parse(decoder.decode(bytes));
+    if (typeof raw !== "object" || raw === null) return null;
+    const m = raw as Record<string, unknown>;
+
+    switch (m.t) {
+      case "hello":
+        if (
+          typeof m.v === "number" &&
+          typeof m.peerId === "string" &&
+          m.peerId.length > 0 &&
+          m.peerId.length <= 64 &&
+          typeof m.name === "string" &&
+          typeof m.roll === "number" &&
+          Number.isInteger(m.roll)
+        ) {
+          return {
+            t: "hello",
+            v: m.v,
+            peerId: m.peerId,
+            name: m.name.slice(0, 24),
+            roll: m.roll,
+          };
+        }
+        return null;
+      case "move":
+        if (
+          typeof m.from === "string" &&
+          SQUARE.test(m.from) &&
+          typeof m.to === "string" &&
+          SQUARE.test(m.to) &&
+          typeof m.ply === "number" &&
+          Number.isInteger(m.ply) &&
+          m.ply >= 1 &&
+          (m.promotion === undefined ||
+            (typeof m.promotion === "string" &&
+              PROMOTIONS.includes(m.promotion)))
+        ) {
+          return {
+            t: "move",
+            from: m.from,
+            to: m.to,
+            promotion: m.promotion as "q" | "r" | "b" | "n" | undefined,
+            ply: m.ply,
+          };
+        }
+        return null;
+      case "resign":
+      case "drawOffer":
+      case "drawAccept":
+      case "drawDecline":
+      case "rematchOffer":
+      case "rematchAccept":
+      case "rematchDecline":
+      case "leave":
+      case "ping":
+      case "pong":
+        return { t: m.t };
+      default:
+        return null;
+    }
+  } catch {
+    return null;
+  }
+}
+
+===== FILE: src/core/game/gameSession.ts =====
+import { ChessGame } from './chessGame';
+import type {
+  Color,
+  GameStatus,
+  MoveInput,
+  MoveRecord,
+  MoveResult,
+  Piece,
+  Square,
+} from './types';
+
+/** One game as seen from one phone. */
+export class GameSession {
+  private game = new ChessGame();
+
+  constructor(readonly localColor: Color) {}
+
+  get opponentColor(): Color {
+    return this.localColor === 'w' ? 'b' : 'w';
+  }
+
+  /** Move made by the person holding this phone. */
+  moveLocal(input: MoveInput): MoveResult {
+    if (this.game.status().kind !== 'playing') {
+      return { ok: false, error: 'The game is over' };
+    }
+    if (this.game.turn() !== this.localColor) {
+      return { ok: false, error: "It is not your turn" };
+    }
+    return this.game.move(input);
+  }
+
+  /** Move received from the other phone. It is fully validated. */
+  applyRemote(input: MoveInput): MoveResult {
+    if (this.game.status().kind !== 'playing') {
+      return { ok: false, error: 'The game is over' };
+    }
+    if (this.game.turn() !== this.opponentColor) {
+      return { ok: false, error: 'Opponent moved out of turn' };
+    }
+    return this.game.move(input);
+  }
+
+  legalMovesFrom(from: Square): Square[] {
+    return this.game.legalMovesFrom(from);
+  }
+
+  isPromotionMove(from: Square, to: Square): boolean {
+    return this.game.isPromotionMove(from, to);
+  }
+
+  pieceAt(square: Square): Piece | null {
+    return this.game.pieceAt(square);
+  }
+
+  fen(): string {
+    return this.game.fen();
+  }
+
+  turn(): Color {
+    return this.game.turn();
+  }
+
+  isMyTurn(): boolean {
+    return this.game.turn() === this.localColor;
+  }
+
+  status(): GameStatus {
+    return this.game.status();
+  }
+
+  history(): MoveRecord[] {
+    return this.game.history();
+  }
+
+  lastMove(): MoveRecord | null {
+    return this.game.lastMove();
+  }
+}
+===== FILE: src/ui/lobby/lobbyScreen.tsx =====
+import type { ScanResult } from "expo-ble-kit";
+import { useEffect, useRef, useState } from "react";
+import { Pressable, ScrollView, Text, View } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
+
+import { feedback } from "@/core/feedback";
+import type { Color } from "@/core/game";
+import {
+  blockPlayer,
+  loadBlocked,
+  unblockPlayer,
+  type BlockedPlayer,
+} from "@/core/storage/blocked";
+import { BleTransport } from "@/core/transport";
+import { PullString } from "@/ui/common/pullString";
+import { GamePopup } from "@/ui/game/gamePopups";
+import { GameScreen } from "@/ui/game/gameScreen";
+import { BounceButton } from "@/ui/home/bounceButton";
+import { BlockedPlayers } from "@/ui/lobby/blockedPlayers";
+import { Radar } from "@/ui/lobby/radar";
+
+/** A second challenge from the same player within this time is ignored. */
+const COOLDOWN_MS = 15000;
+
+type Props = {
+  playerName: string;
+  /** Back to the home screen. Leaving this screen also stops Bluetooth. */
+  onExit: () => void;
+};
+
+type Game = { localColor: Color; opponentName: string; round: number };
+type Challenge = { peerId: string; name: string };
+
+export function LobbyScreen({ playerName, onExit }: Props) {
+  "use no memo";
+  const [transport] = useState(() => new BleTransport(playerName));
+  const [found, setFound] = useState<ScanResult[]>([]);
+  const [logs, setLogs] = useState<string[]>([]);
+  const [started, setStarted] = useState(false);
+  const [game, setGame] = useState<Game | null>(null);
+  const [challenge, setChallenge] = useState<Challenge | null>(null);
+  const [waitingId, setWaitingId] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+  const [blocked, setBlocked] = useState<BlockedPlayer[]>(() => loadBlocked());
+  const [showBlocked, setShowBlocked] = useState(false);
+  const [showLog, setShowLog] = useState(false);
+  const seen = useRef(new Set<string>());
+  const lastChallenge = useRef(new Map<string, number>());
+
+  useEffect(() => {
+    const off = transport.onEvent((e) => {
+      if (e.kind === "log") {
+        setLogs((old) =>
+          [`${new Date().toLocaleTimeString()}  ${e.text}`, ...old].slice(
+            0,
+            40,
+          ),
+        );
+      } else if (e.kind === "found") {
+        // Soft ping when a phone we have not seen before appears.
+        const fresh = e.devices.some((d) => !seen.current.has(d.id));
+        e.devices.forEach((d) => seen.current.add(d.id));
+        if (fresh) feedback.playerFound();
+        setFound(e.devices);
+      } else if (e.kind === "challenge") {
+        const now = Date.now();
+        const previous = lastChallenge.current.get(e.peerId);
+        lastChallenge.current.set(e.peerId, now);
+        const isBlocked = blocked.some((b) => b.id === e.peerId);
+        const tooSoon = previous !== undefined && now - previous < COOLDOWN_MS;
+        if (isBlocked || tooSoon) {
+          transport.decline();
+          return;
+        }
+        feedback.challenge(); // loud sound + strong vibration
+        setChallenge({ peerId: e.peerId, name: e.name });
+      } else if (e.kind === "challengeExpired") {
+        setChallenge(null);
+      } else if (e.kind === "noAnswer") {
+        setWaitingId(null);
+        setMessage("No answer. They may have declined.");
+      } else if (e.kind === "ready") {
+        feedback.challengeAccepted();
+        setChallenge(null);
+        setWaitingId(null);
+        setGame({
+          localColor: e.localColor,
+          opponentName: e.opponentName,
+          round: 1,
+        });
+      }
+    });
+    return () => {
+      off();
+    };
+  }, [transport, blocked]);
+
+  useEffect(() => {
+    return () => {
+      void transport.stop();
+    };
+  }, [transport]);
+
+  if (game) {
+    return (
+      <GameScreen
+        key={game.round}
+        localColor={game.localColor}
+        transport={transport}
+        opponentName={game.opponentName}
+        onRematch={() =>
+          setGame(
+            (g) =>
+              g && {
+                ...g,
+                localColor: g.localColor === "w" ? "b" : "w",
+                round: g.round + 1,
+              },
+          )
+        }
+        onLeave={onExit}
+      />
+    );
+  }
+
+  const start = async () => {
+    feedback.tap();
+    setStarted(true);
+    try {
+      await transport.start();
+    } catch {
+      setStarted(false);
+    }
+  };
+
+  const challengePlayer = (id: string) => {
+    if (waitingId) return;
+    feedback.tap();
+    setMessage(null);
+    setWaitingId(id);
+    void transport.connect(id).then((ok) => {
+      if (!ok) {
+        setWaitingId(null);
+        setMessage("Could not connect. Try again.");
+      }
+    });
+  };
+
+  const accept = () => {
+    feedback.tap();
+    transport.accept();
+    setChallenge(null);
+  };
+
+  const decline = () => {
+    feedback.tap();
+    transport.decline();
+    setChallenge(null);
+  };
+
+  const block = () => {
+    if (!challenge) return;
+    feedback.tap();
+    transport.decline();
+    setBlocked(blockPlayer({ id: challenge.peerId, name: challenge.name }));
+    setChallenge(null);
+  };
+
+  const status = waitingId
+    ? "Challenge sent. Waiting for an answer..."
+    : (message ?? `Nearby phones: ${found.length}`);
+
+  return (
+    <SafeAreaView className="flex-1 bg-canvas px-5">
+      <ScrollView
+        className="flex-1"
+        contentContainerClassName="pb-8 pt-14"
+        showsVerticalScrollIndicator={false}
+      >
+        <Text className="text-3xl font-extrabold text-ink">
+          Find an opponent
+        </Text>
+        <Text className="mt-2 text-base leading-6 text-ink/70">
+          Press Start on both phones. Nearby phones show up on the radar. Tap a
+          dot to challenge it.
+        </Text>
+
+        <View className="mt-6">
+          <Radar
+            devices={found}
+            waitingId={waitingId}
+            active={started}
+            onSelect={challengePlayer}
+          />
+        </View>
+
+        {!started ? (
+          <View className="mt-6 items-center">
+            <BounceButton
+              onPress={start}
+              className="rounded-full bg-accent px-12 py-4"
+            >
+              <Text className="text-xl font-extrabold text-ink">Start</Text>
+            </BounceButton>
+          </View>
+        ) : (
+          <View className="mt-5 flex-row items-center self-center rounded-full bg-bar px-4 py-2">
+            <View className="mr-2 h-2.5 w-2.5 rounded-full bg-accent" />
+            <Text className="text-sm font-semibold text-ink">{status}</Text>
+          </View>
+        )}
+
+        <View className="mt-8 flex-row justify-center">
+          <Pressable
+            onPress={() => {
+              feedback.tap();
+              setShowBlocked(true);
+            }}
+            className="mr-3 rounded-full border border-ink/10 bg-bar px-4 py-2"
+          >
+            <Text className="text-sm font-semibold text-ink">
+              Blocked players ({blocked.length})
+            </Text>
+          </Pressable>
+          <Pressable
+            onPress={() => {
+              feedback.tap();
+              setShowLog((v) => !v);
+            }}
+            className="rounded-full border border-ink/10 bg-bar px-4 py-2"
+          >
+            <Text className="text-sm font-semibold text-ink">
+              {showLog ? "Hide log" : "Show log"}
+            </Text>
+          </Pressable>
+        </View>
+
+        {showLog && (
+          <View className="mt-4 rounded-2xl bg-bar p-3">
+            {logs.map((line, i) => (
+              <Text key={i} className="text-xs text-ink/80">
+                {line}
+              </Text>
+            ))}
+          </View>
+        )}
+      </ScrollView>
+
+      <PullString onPull={onExit} />
+
+      {/* The challenge sound and vibration already played, so the popup stays quiet. */}
+      <GamePopup
+        visible={challenge !== null}
+        sound={false}
+        title={`${challenge?.name ?? "Someone"} wants to play`}
+        message="Accept the challenge?"
+        actions={[
+          { label: "Block", tone: "danger", onPress: block },
+          { label: "Decline", tone: "neutral", onPress: decline },
+          { label: "Accept", tone: "primary", onPress: accept },
+        ]}
+      />
+
+      <BlockedPlayers
+        visible={showBlocked}
+        players={blocked}
+        onUnblock={(id) => setBlocked(unblockPlayer(id))}
+        onClose={() => setShowBlocked(false)}
+      />
+    </SafeAreaView>
+  );
+}
+
